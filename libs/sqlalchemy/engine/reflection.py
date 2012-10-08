@@ -1,5 +1,5 @@
 # engine/reflection.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -27,6 +27,7 @@ methods such as get_table_names, get_columns, etc.
 import sqlalchemy
 from sqlalchemy import exc, sql
 from sqlalchemy import util
+from sqlalchemy.util import topological
 from sqlalchemy.types import TypeEngine
 from sqlalchemy import schema as sa_schema
 
@@ -150,27 +151,19 @@ class Inspector(object):
 
         if hasattr(self.dialect, 'get_table_names'):
             tnames = self.dialect.get_table_names(self.bind,
-            schema,
-                                                    info_cache=self.info_cache)
+            schema, info_cache=self.info_cache)
         else:
             tnames = self.engine.table_names(schema)
         if order_by == 'foreign_key':
-            ordered_tnames = tnames[:]
-            # Order based on foreign key dependencies.
+            import random
+            random.shuffle(tnames)
+
+            tuples = []
             for tname in tnames:
-                table_pos = tnames.index(tname)
-                fkeys = self.get_foreign_keys(tname, schema)
-                for fkey in fkeys:
-                    rtable = fkey['referred_table']
-                    if rtable in ordered_tnames:
-                        ref_pos = ordered_tnames.index(rtable)
-                        # Make sure it's lower in the list than anything it
-                        # references.
-                        if table_pos > ref_pos:
-                            ordered_tnames.pop(table_pos) # rtable moves up 1
-                            # insert just below rtable
-                            ordered_tnames.index(ref_pos, tname)
-            tnames = ordered_tnames
+                for fkey in self.get_foreign_keys(tname, schema):
+                    if tname != fkey['referred_table']:
+                        tuples.append((tname, fkey['referred_table']))
+            tnames = list(topological.sort(tuples, tnames))
         return tnames
 
     def get_table_options(self, table_name, schema=None, **kw):
@@ -324,7 +317,7 @@ class Inspector(object):
                                             info_cache=self.info_cache, **kw)
         return indexes
 
-    def reflecttable(self, table, include_columns):
+    def reflecttable(self, table, include_columns, exclude_columns=()):
         """Given a Table object, load its internal constructs based on introspection.
 
         This is the underlying method used by most dialects to produce 
@@ -381,6 +374,8 @@ class Inspector(object):
             name = col_d['name']
             if include_columns and name not in include_columns:
                 continue
+            if exclude_columns and name in exclude_columns:
+                continue
 
             coltype = col_d['type']
             col_kw = {
@@ -419,9 +414,12 @@ class Inspector(object):
         # Primary keys
         pk_cons = self.get_pk_constraint(table_name, schema, **tblkw)
         if pk_cons:
+            pk_cols = [table.c[pk] 
+                        for pk in pk_cons['constrained_columns'] 
+                        if pk in table.c and pk not in exclude_columns
+                    ] + [pk for pk in table.primary_key if pk.key in exclude_columns]
             primary_key_constraint = sa_schema.PrimaryKeyConstraint(name=pk_cons.get('name'), 
-                *[table.c[pk] for pk in pk_cons['constrained_columns']
-                if pk in table.c]
+                *pk_cols
             )
 
             table.append_constraint(primary_key_constraint)

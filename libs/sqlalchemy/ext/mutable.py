@@ -1,5 +1,5 @@
 # ext/mutable.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -180,7 +180,7 @@ not picklable, due to the fact that they contain weakrefs and function
 callbacks. In our case, this is a good thing, since if this dictionary were
 picklable, it could lead to an excessively large pickle size for our value
 objects that are pickled by themselves outside of the context of the parent.
-The developer responsiblity here is only to provide a ``__getstate__`` method
+The developer responsibility here is only to provide a ``__getstate__`` method
 that excludes the :meth:`~.MutableBase._parents` collection from the pickle
 stream::
 
@@ -217,12 +217,13 @@ be assigned an object value which represents information "composed" from one
 or more columns from the underlying mapped table. The usual example is that of
 a geometric "point", and is introduced in :ref:`mapper_composite`.
 
-As of SQLAlchemy 0.7, the internals of :func:`.orm.composite` have been
-greatly simplified and in-place mutation detection is no longer enabled by
-default; instead, the user-defined value must detect changes on its own and
-propagate them to all owning parents. The :mod:`sqlalchemy.ext.mutable`
-extension provides the helper class :class:`.MutableComposite`, which is a
-slight variant on the :class:`.Mutable` class.
+.. versionchanged:: 0.7
+    The internals of :func:`.orm.composite` have been
+    greatly simplified and in-place mutation detection is no longer enabled by
+    default; instead, the user-defined value must detect changes on its own and
+    propagate them to all owning parents. The :mod:`sqlalchemy.ext.mutable`
+    extension provides the helper class :class:`.MutableComposite`, which is a
+    slight variant on the :class:`.Mutable` class.
 
 As is the case with :class:`.Mutable`, the user-defined composite class
 subclasses :class:`.MutableComposite` as a mixin, and detects and delivers
@@ -448,7 +449,9 @@ class Mutable(MutableBase):
 
         This is a convenience method that calls ``associate_with_attribute`` automatically.
 
-        .. warning:: The listeners established by this method are *global*
+        .. warning:: 
+        
+           The listeners established by this method are *global*
            to all mappers, and are *not* garbage collected.   Only use 
            :meth:`.associate_with` for types that are permanent to an application,
            not with ad-hoc types else this will cause unbounded growth
@@ -488,7 +491,9 @@ class Mutable(MutableBase):
         of the particular :meth:`.Mutable` subclass to establish a global
         association.
 
-        .. warning:: The listeners established by this method are *global*
+        .. warning:: 
+        
+           The listeners established by this method are *global*
            to all mappers, and are *not* garbage collected.   Only use 
            :meth:`.as_mutable` for types that are permanent to an application,
            not with ad-hoc types else this will cause unbounded growth
@@ -519,7 +524,9 @@ class MutableComposite(MutableBase):
     
     See the example in :ref:`mutable_composites` for usage information.
     
-    .. warning:: The listeners established by the :class:`.MutableComposite`
+    .. warning:: 
+    
+       The listeners established by the :class:`.MutableComposite`
        class are *global* to all mappers, and are *not* garbage collected.   Only use 
        :class:`.MutableComposite` for types that are permanent to an application,
        not with ad-hoc types else this will cause unbounded growth

@@ -1,5 +1,5 @@
 # sqlalchemy/exc.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -27,12 +27,35 @@ class ArgumentError(SQLAlchemyError):
 
 
 class CircularDependencyError(SQLAlchemyError):
-    """Raised by topological sorts when a circular dependency is detected"""
-    def __init__(self, message, cycles, edges):
-        message += ": cycles: %r all edges: %r" % (cycles, edges)
+    """Raised by topological sorts when a circular dependency is detected.
+    
+    There are two scenarios where this error occurs:
+    
+    * In a Session flush operation, if two objects are mutually dependent
+      on each other, they can not be inserted or deleted via INSERT or 
+      DELETE statements alone; an UPDATE will be needed to post-associate
+      or pre-deassociate one of the foreign key constrained values.
+      The ``post_update`` flag described at :ref:`post_update` can resolve 
+      this cycle.
+    * In a :meth:`.MetaData.create_all`, :meth:`.MetaData.drop_all`,
+      :attr:`.MetaData.sorted_tables` operation, two :class:`.ForeignKey`
+      or :class:`.ForeignKeyConstraint` objects mutually refer to each
+      other.  Apply the ``use_alter=True`` flag to one or both,
+      see :ref:`use_alter`.
+      
+    """
+    def __init__(self, message, cycles, edges, msg=None):
+        if msg is None:
+            message += " Cycles: %r all edges: %r" % (cycles, edges)
+        else:
+            message = msg
         SQLAlchemyError.__init__(self, message)
         self.cycles = cycles
         self.edges = edges
+
+    def __reduce__(self):
+        return self.__class__, (None, self.cycles, 
+                            self.edges, self.args[0])
 
 class CompileError(SQLAlchemyError):
     """Raised when an error occurs during SQL compilation"""
@@ -47,7 +70,10 @@ class DisconnectionError(SQLAlchemyError):
     """A disconnect is detected on a raw DB-API connection.
 
     This error is raised and consumed internally by a connection pool.  It can
-    be raised by a ``PoolListener`` so that the host pool forces a disconnect.
+    be raised by the :meth:`.PoolEvents.checkout` event 
+    so that the host pool forces a retry; the exception will be caught
+    three times in a row before the pool gives up and raises 
+    :class:`~sqlalchemy.exc.InvalidRequestError` regarding the connection attempt.
 
     """
 
@@ -83,6 +109,9 @@ class NoReferencedTableError(NoReferenceError):
         NoReferenceError.__init__(self, message)
         self.table_name = tname
 
+    def __reduce__(self):
+        return self.__class__, (self.args[0], self.table_name)
+
 class NoReferencedColumnError(NoReferenceError):
     """Raised by ``ForeignKey`` when the referred ``Column`` cannot be located."""
 
@@ -90,6 +119,10 @@ class NoReferencedColumnError(NoReferenceError):
         NoReferenceError.__init__(self, message)
         self.table_name = tname
         self.column_name = cname
+
+    def __reduce__(self):
+        return self.__class__, (self.args[0], self.table_name, 
+                            self.column_name)
 
 class NoSuchTableError(InvalidRequestError):
     """Table does not exist or is not visible to a connection."""
@@ -129,7 +162,7 @@ UnmappedColumnError = None
 class StatementError(SQLAlchemyError):
     """An error occurred during execution of a SQL statement.
     
-    :class:`.StatementError` wraps the exception raised
+    :class:`StatementError` wraps the exception raised
     during execution, and features :attr:`.statement`
     and :attr:`.params` attributes which supply context regarding
     the specifics of the statement which had an issue.
@@ -139,41 +172,50 @@ class StatementError(SQLAlchemyError):
     
     """
 
+    statement = None
+    """The string SQL statement being invoked when this exception occurred."""
+
+    params = None
+    """The parameter list being used when this exception occurred."""
+
+    orig = None
+    """The DBAPI exception object."""
+
     def __init__(self, message, statement, params, orig):
         SQLAlchemyError.__init__(self, message)
         self.statement = statement
         self.params = params
         self.orig = orig
 
+    def __reduce__(self):
+        return self.__class__, (self.args[0], self.statement, 
+                                self.params, self.orig)
+
     def __str__(self):
-        if isinstance(self.params, (list, tuple)) and \
-            len(self.params) > 10 and \
-            isinstance(self.params[0], (list, dict, tuple)):
-            return ' '.join((SQLAlchemyError.__str__(self),
-                             repr(self.statement),
-                             repr(self.params[:2]),
-                             '... and a total of %i bound parameter sets' % len(self.params)))
+        from sqlalchemy.sql import util
+        params_repr = util._repr_params(self.params, 10)
         return ' '.join((SQLAlchemyError.__str__(self),
-                         repr(self.statement), repr(self.params)))
+                         repr(self.statement), repr(params_repr)))
+
 
 class DBAPIError(StatementError):
     """Raised when the execution of a database operation fails.
 
-    ``DBAPIError`` wraps exceptions raised by the DB-API underlying the
+    Wraps exceptions raised by the DB-API underlying the
     database operation.  Driver-specific implementations of the standard
     DB-API exception types are wrapped by matching sub-types of SQLAlchemy's
-    ``DBAPIError`` when possible.  DB-API's ``Error`` type maps to
-    ``DBAPIError`` in SQLAlchemy, otherwise the names are identical.  Note
+    :class:`DBAPIError` when possible.  DB-API's ``Error`` type maps to
+    :class:`DBAPIError` in SQLAlchemy, otherwise the names are identical.  Note
     that there is no guarantee that different DB-API implementations will
     raise the same exception type for any given error condition.
 
-    :class:`.DBAPIError` features :attr:`.statement`
-    and :attr:`.params` attributes which supply context regarding
+    :class:`DBAPIError` features :attr:`~.StatementError.statement`
+    and :attr:`~.StatementError.params` attributes which supply context regarding
     the specifics of the statement which had an issue, for the 
     typical case when the error was raised within the context of
     emitting a SQL statement.
 
-    The wrapped exception object is available in the :attr:`.orig` attribute.
+    The wrapped exception object is available in the :attr:`~.StatementError.orig` attribute.
     Its type and properties are DB-API implementation specific.
 
     """
@@ -203,6 +245,10 @@ class DBAPIError(StatementError):
                 cls = glob[name]
 
         return cls(statement, params, orig, connection_invalidated)
+
+    def __reduce__(self):
+        return self.__class__, (self.statement, self.params, 
+                    self.orig, self.connection_invalidated)
 
     def __init__(self, statement, params, orig, connection_invalidated=False):
         try:

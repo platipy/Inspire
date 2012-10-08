@@ -1,5 +1,5 @@
 # ext/orderinglist.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -73,7 +73,9 @@ Use the ``ordering_list`` function to set up the ``collection_class`` on relatio
 (as in the mapper example above).  This implementation depends on the list
 starting in the proper order, so be SURE to put an order_by on your relationship.
 
-.. warning:: ``ordering_list`` only provides limited functionality when a primary
+.. warning:: 
+
+  ``ordering_list`` only provides limited functionality when a primary
   key column or unique column is the target of the sort.  Since changing the order of 
   entries often means that two rows must trade values, this is not possible when 
   the value is constrained by a primary key or unique constraint, since one of the rows
@@ -146,7 +148,7 @@ def count_from_n_factory(start):
     return f
 
 def _unsugar_count_from(**kw):
-    """Builds counting functions from keywrod arguments.
+    """Builds counting functions from keyword arguments.
 
     Keyword argument filter, prepares a simple ``ordering_func`` from a
     ``count_from`` argument, otherwise passes ``ordering_func`` on unchanged.
@@ -182,12 +184,11 @@ class OrderingList(list):
         This implementation relies on the list starting in the proper order,
         so be **sure** to put an ``order_by`` on your relationship.
 
-        ordering_attr
+        :param ordering_attr: 
           Name of the attribute that stores the object's order in the
           relationship.
 
-        ordering_func
-          Optional.  A function that maps the position in the Python list to a
+        :param ordering_func: Optional.  A function that maps the position in the Python list to a
           value to store in the ``ordering_attr``.  Values returned are
           usually (but need not be!) integers.
 
@@ -200,7 +201,7 @@ class OrderingList(list):
           like stepped numbering, alphabetical and Fibonacci numbering, see
           the unit tests.
 
-        reorder_on_append
+        :param reorder_on_append: 
           Default False.  When appending an object with an existing (non-None)
           ordering value, that value will be left untouched unless
           ``reorder_on_append`` is true.  This is an optimization to avoid a
@@ -313,9 +314,23 @@ class OrderingList(list):
         self._reorder()
     # end Py2K
 
+    def __reduce__(self):
+        return _reconstitute, (self.__class__, self.__dict__, list(self))
+
     for func_name, func in locals().items():
         if (util.callable(func) and func.func_name == func_name and
             not func.__doc__ and hasattr(list, func_name)):
             func.__doc__ = getattr(list, func_name).__doc__
     del func_name, func
 
+def _reconstitute(cls, dict_, items):
+    """ Reconstitute an ``OrderingList``.
+
+    This is the adjoint to ``OrderingList.__reduce__()``.  It is used for
+    unpickling ``OrderingList``\\s
+
+    """
+    obj = cls.__new__(cls)
+    obj.__dict__.update(dict_)
+    list.extend(obj, items)
+    return obj

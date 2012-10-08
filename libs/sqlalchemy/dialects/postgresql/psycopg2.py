@@ -1,5 +1,5 @@
 # postgresql/psycopg2.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -38,6 +38,26 @@ psycopg2-specific keyword arguments which are accepted by
 * *use_native_unicode* - Enable the usage of Psycopg2 "native unicode" mode
   per connection. True by default.
 
+Unix Domain Connections
+------------------------
+
+psycopg2 supports connecting via Unix domain connections.   When the ``host``
+portion of the URL is omitted, SQLAlchemy passes ``None`` to psycopg2,
+which specifies Unix-domain communication rather than TCP/IP communication::
+
+    create_engine("postgresql+psycopg2://user:password@/dbname")
+
+By default, the socket file used is to connect to a Unix-domain socket
+in ``/tmp``, or whatever socket directory was specified when PostgreSQL 
+was built.  This value can be overridden by passing a pathname to psycopg2,
+using ``host`` as an additional keyword argument::
+
+    create_engine("postgresql+psycopg2://user:password@/dbname?host=/var/lib/postgresql")
+
+See also:
+
+`PQconnectdbParams <http://www.postgresql.org/docs/9.1/static/libpq-connect.html#LIBPQ-PQCONNECTDBPARAMS>`_
+
 Per-Statement/Connection Execution Options
 -------------------------------------------
 
@@ -58,23 +78,47 @@ Unicode
 By default, the psycopg2 driver uses the ``psycopg2.extensions.UNICODE``
 extension, such that the DBAPI receives and returns all strings as Python
 Unicode objects directly - SQLAlchemy passes these values through without
-change. Note that this setting requires that the PG client encoding be set to
-one which can accomodate the kind of character data being passed - typically
-``utf-8``. If the Postgresql database is configured for ``SQL_ASCII``
-encoding, which is often the default for PG installations, it may be necessary
-for non-ascii strings to be encoded into a specific encoding before being
-passed to the DBAPI. If changing the database's client encoding setting is not
-an option, specify ``use_native_unicode=False`` as a keyword argument to
-``create_engine()``, and take note of the ``encoding`` setting as well, which
-also defaults to ``utf-8``. Note that disabling "native unicode" mode has a
-slight performance penalty, as SQLAlchemy now must translate unicode strings
-to/from an encoding such as utf-8, a task that is handled more efficiently
-within the Psycopg2 driver natively.
+change.   Psycopg2 here will encode/decode string values based on the
+current "client encoding" setting; by default this is the value in 
+the ``postgresql.conf`` file, which often defaults to ``SQL_ASCII``.   
+Typically, this can be changed to ``utf-8``, as a more useful default::
+
+    #client_encoding = sql_ascii # actually, defaults to database
+                                 # encoding
+    client_encoding = utf8
+
+A second way to affect the client encoding is to set it within Psycopg2
+locally.   SQLAlchemy will call psycopg2's ``set_client_encoding()``
+method (see: http://initd.org/psycopg/docs/connection.html#connection.set_client_encoding)
+on all new connections based on the value passed to 
+:func:`.create_engine` using the ``client_encoding`` parameter::
+
+    engine = create_engine("postgresql://user:pass@host/dbname", client_encoding='utf8')
+
+This overrides the encoding specified in the Postgresql client configuration.
+
+.. versionadded:: 0.7.3
+    The psycopg2-specific ``client_encoding`` parameter to :func:`.create_engine`.
+
+SQLAlchemy can also be instructed to skip the usage of the psycopg2
+``UNICODE`` extension and to instead utilize it's own unicode encode/decode
+services, which are normally reserved only for those DBAPIs that don't 
+fully support unicode directly.  Passing ``use_native_unicode=False`` 
+to :func:`.create_engine` will disable usage of ``psycopg2.extensions.UNICODE``.
+SQLAlchemy will instead encode data itself into Python bytestrings on the way 
+in and coerce from bytes on the way back,
+using the value of the :func:`.create_engine` ``encoding`` parameter, which 
+defaults to ``utf-8``.
+SQLAlchemy's own unicode encode/decode functionality is steadily becoming
+obsolete as more DBAPIs support unicode fully along with the approach of 
+Python 3; in modern usage psycopg2 should be relied upon to handle unicode.
 
 Transactions
 ------------
 
 The psycopg2 dialect fully supports SAVEPOINT and two-phase commit operations.
+
+.. _psycopg2_isolation:
 
 Transaction Isolation Level
 ---------------------------
@@ -97,7 +141,6 @@ The psycopg2 dialect will log Postgresql NOTICE messages via the
 
 """
 
-import random
 import re
 import logging
 
@@ -165,6 +208,8 @@ SERVER_SIDE_CURSOR_RE = re.compile(
     r'\s*SELECT',
     re.I | re.UNICODE)
 
+_server_side_id = util.counter()
+
 class PGExecutionContext_psycopg2(PGExecutionContext):
     def create_cursor(self):
         # TODO: coverage for server side cursors + select.for_update()
@@ -187,7 +232,7 @@ class PGExecutionContext_psycopg2(PGExecutionContext):
         if is_server_side:
             # use server-side cursors:
             # http://lists.initd.org/pipermail/psycopg/2007-January/005251.html
-            ident = "c_%s_%s" % (hex(id(self))[2:], hex(random.randint(0, 65535))[2:])
+            ident = "c_%s_%s" % (hex(id(self))[2:], hex(_server_side_id())[2:])
             return self._dbapi_connection.cursor(ident)
         else:
             return self._dbapi_connection.cursor()
@@ -246,11 +291,13 @@ class PGDialect_psycopg2(PGDialect):
         }
     )
 
-    def __init__(self, server_side_cursors=False, use_native_unicode=True, **kwargs):
+    def __init__(self, server_side_cursors=False, use_native_unicode=True, 
+                        client_encoding=None, **kwargs):
         PGDialect.__init__(self, **kwargs)
         self.server_side_cursors = server_side_cursors
         self.use_native_unicode = use_native_unicode
         self.supports_unicode_binds = use_native_unicode
+        self.client_encoding = client_encoding
         if self.dbapi and hasattr(self.dbapi, '__version__'):
             m = re.match(r'(\d+)\.(\d+)(?:\.(\d+))?', 
                                 self.dbapi.__version__)
@@ -288,21 +335,30 @@ class PGDialect_psycopg2(PGDialect):
         connection.set_isolation_level(level)
 
     def on_connect(self):
+        fns = []
+        if self.client_encoding is not None:
+            def on_connect(conn):
+                conn.set_client_encoding(self.client_encoding)
+            fns.append(on_connect)
+
         if self.isolation_level is not None:
-            def base_on_connect(conn):
+            def on_connect(conn):
                 self.set_isolation_level(conn, self.isolation_level)
-        else:
-            base_on_connect = None
+            fns.append(on_connect)
 
         if self.dbapi and self.use_native_unicode:
             extensions = __import__('psycopg2.extensions').extensions
-            def connect(conn):
+            def on_connect(conn):
                 extensions.register_type(extensions.UNICODE, conn)
-                if base_on_connect:
-                    base_on_connect(conn)
-            return connect
+            fns.append(on_connect)
+
+        if fns:
+            def on_connect(conn):
+                for fn in fns:
+                    fn(conn)
+            return on_connect
         else:
-            return base_on_connect
+            return None
 
     def create_connect_args(self, url):
         opts = url.translate_connect_args(username='user')

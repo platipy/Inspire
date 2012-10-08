@@ -1,5 +1,5 @@
 # ext/hybrid.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -11,30 +11,30 @@ class level and at the instance level.
 
 The :mod:`~sqlalchemy.ext.hybrid` extension provides a special form of method
 decorator, is around 50 lines of code and has almost no dependencies on the rest 
-of SQLAlchemy.  It can in theory work with any class-level expression generator.
+of SQLAlchemy.  It can, in theory, work with any descriptor-based expression 
+system.
 
-Consider a table ``interval`` as below::
+Consider a mapping ``Interval``, representing integer ``start`` and ``end``
+values. We can define higher level functions on mapped classes that produce
+SQL expressions at the class level, and Python expression evaluation at the
+instance level.  Below, each function decorated with :class:`.hybrid_method` or
+:class:`.hybrid_property` may receive ``self`` as an instance of the class, or
+as the class itself::
 
-    from sqlalchemy import MetaData, Table, Column, Integer
-
-    metadata = MetaData()
-
-    interval_table = Table('interval', metadata,
-        Column('id', Integer, primary_key=True),
-        Column('start', Integer, nullable=False),
-        Column('end', Integer, nullable=False)
-    )
-
-We can define higher level functions on mapped classes that produce SQL
-expressions at the class level, and Python expression evaluation at the
-instance level.  Below, each function decorated with :func:`.hybrid_method`
-or :func:`.hybrid_property` may receive ``self`` as an instance of the class,
-or as the class itself::
-
+    from sqlalchemy import Column, Integer
+    from sqlalchemy.ext.declarative import declarative_base
+    from sqlalchemy.orm import Session, aliased
     from sqlalchemy.ext.hybrid import hybrid_property, hybrid_method
-    from sqlalchemy.orm import mapper, Session, aliased
+    
+    Base = declarative_base()
+    
+    class Interval(Base):
+        __tablename__ = 'interval'
 
-    class Interval(object):
+        id = Column(Integer, primary_key=True)
+        start = Column(Integer, nullable=False)
+        end = Column(Integer, nullable=False)
+
         def __init__(self, start, end):
             self.start = start
             self.end = end
@@ -51,8 +51,6 @@ or as the class itself::
         def intersects(self, other):
             return self.contains(other.start) | self.contains(other.end)
     
-    mapper(Interval, interval_table)
-
 Above, the ``length`` property returns the difference between the ``end`` and
 ``start`` attributes.  With an instance of ``Interval``, this subtraction occurs
 in Python, using normal Python descriptor mechanics::
@@ -60,10 +58,11 @@ in Python, using normal Python descriptor mechanics::
     >>> i1 = Interval(5, 10)
     >>> i1.length
     5
-    
-At the class level, the usual descriptor behavior of returning the descriptor
-itself is modified by :class:`.hybrid_property`, to instead evaluate the function 
-body given the ``Interval`` class as the argument::
+
+When dealing with the ``Interval`` class itself, the :class:`.hybrid_property`
+descriptor evaluates the function body given the ``Interval`` class as 
+the argument, which when evaluated with SQLAlchemy expression mechanics
+returns a new SQL expression::
     
     >>> print Interval.length
     interval."end" - interval.start
@@ -83,9 +82,10 @@ locate attributes, so can also be used with hybrid attributes::
     FROM interval 
     WHERE interval."end" - interval.start = :param_1
 
-The ``contains()`` and ``intersects()`` methods are decorated with :class:`.hybrid_method`.
-This decorator applies the same idea to methods which accept
-zero or more arguments.   The above methods return boolean values, and take advantage 
+The ``Interval`` class example also illustrates two methods, ``contains()`` and ``intersects()``,
+decorated with :class:`.hybrid_method`.
+This decorator applies the same idea to methods that :class:`.hybrid_property` applies
+to attributes.   The methods return boolean values, and take advantage 
 of the Python ``|`` and ``&`` bitwise operators to produce equivalent instance-level and 
 SQL expression-level boolean behavior::
 
@@ -368,7 +368,12 @@ SQL expression versus SQL expression::
 
     >>> sw1 = aliased(SearchWord)
     >>> sw2 = aliased(SearchWord)
-    >>> print Session().query(sw1.word_insensitive, sw2.word_insensitive).filter(sw1.word_insensitive > sw2.word_insensitive)
+    >>> print Session().query(
+    ...                    sw1.word_insensitive, 
+    ...                    sw2.word_insensitive).\\
+    ...                        filter(
+    ...                            sw1.word_insensitive > sw2.word_insensitive
+    ...                        )
     SELECT lower(searchword_1.word) AS lower_1, lower(searchword_2.word) AS lower_2 
     FROM searchword AS searchword_1, searchword AS searchword_2 
     WHERE lower(searchword_1.word) > lower(searchword_2.word)
@@ -385,6 +390,154 @@ Python only expression::
 
 The Hybrid Value pattern is very useful for any kind of value that may have multiple representations,
 such as timestamps, time deltas, units of measurement, currencies and encrypted passwords.
+
+See Also:
+
+`Hybrids and Value Agnostic Types <http://techspot.zzzeek.org/2011/10/21/hybrids-and-value-agnostic-types/>`_ - on the techspot.zzzeek.org blog
+
+`Value Agnostic Types, Part II <http://techspot.zzzeek.org/2011/10/29/value-agnostic-types-part-ii/>`_ - on the techspot.zzzeek.org blog
+
+.. _hybrid_transformers:
+
+Building Transformers
+----------------------
+
+A *transformer* is an object which can receive a :class:`.Query` object and return a
+new one.   The :class:`.Query` object includes a method :meth:`.with_transformation` 
+that simply returns a new :class:`.Query` transformed by the given function.
+
+We can combine this with the :class:`.Comparator` class to produce one type
+of recipe which can both set up the FROM clause of a query as well as assign
+filtering criterion.
+
+Consider a mapped class ``Node``, which assembles using adjacency list into a hierarchical
+tree pattern::
+    
+    from sqlalchemy import Column, Integer, ForeignKey
+    from sqlalchemy.orm import relationship
+    from sqlalchemy.ext.declarative import declarative_base
+    Base = declarative_base()
+    
+    class Node(Base):
+        __tablename__ = 'node'
+        id =Column(Integer, primary_key=True)
+        parent_id = Column(Integer, ForeignKey('node.id'))
+        parent = relationship("Node", remote_side=id)
+    
+Suppose we wanted to add an accessor ``grandparent``.  This would return the ``parent`` of
+``Node.parent``.  When we have an instance of ``Node``, this is simple::
+
+    from sqlalchemy.ext.hybrid import hybrid_property
+
+    class Node(Base):
+        # ...
+        
+        @hybrid_property
+        def grandparent(self):
+            return self.parent.parent
+
+For the expression, things are not so clear.   We'd need to construct a :class:`.Query` where we
+:meth:`~.Query.join` twice along ``Node.parent`` to get to the ``grandparent``.   We can instead
+return a transforming callable that we'll combine with the :class:`.Comparator` class
+to receive any :class:`.Query` object, and return a new one that's joined to the ``Node.parent``
+attribute and filtered based on the given criterion::
+
+    from sqlalchemy.ext.hybrid import Comparator
+
+    class GrandparentTransformer(Comparator):
+        def operate(self, op, other):
+            def transform(q):
+                cls = self.__clause_element__()
+                parent_alias = aliased(cls)
+                return q.join(parent_alias, cls.parent).\\
+                            filter(op(parent_alias.parent, other))
+            return transform
+
+    Base = declarative_base()
+
+    class Node(Base):
+        __tablename__ = 'node'
+        id =Column(Integer, primary_key=True)
+        parent_id = Column(Integer, ForeignKey('node.id'))
+        parent = relationship("Node", remote_side=id)
+        
+        @hybrid_property
+        def grandparent(self):
+            return self.parent.parent
+
+        @grandparent.comparator
+        def grandparent(cls):
+            return GrandparentTransformer(cls)
+
+The ``GrandparentTransformer`` overrides the core :meth:`.Operators.operate` method
+at the base of the :class:`.Comparator` hierarchy to return a query-transforming
+callable, which then runs the given comparison operation in a particular context.
+Such as, in the example above, the ``operate`` method is called, given the
+:attr:`.Operators.eq` callable as well as the right side of the comparison
+``Node(id=5)``.  A function ``transform`` is then returned which will transform
+a :class:`.Query` first to join to ``Node.parent``, then to compare ``parent_alias``
+using :attr:`.Operators.eq` against the left and right sides, passing into
+:class:`.Query.filter`:
+
+.. sourcecode:: pycon+sql
+
+    >>> from sqlalchemy.orm import Session
+    >>> session = Session()
+    {sql}>>> session.query(Node).\\
+    ...        with_transformation(Node.grandparent==Node(id=5)).\\
+    ...        all()
+    SELECT node.id AS node_id, node.parent_id AS node_parent_id 
+    FROM node JOIN node AS node_1 ON node_1.id = node.parent_id 
+    WHERE :param_1 = node_1.parent_id
+    {stop}
+
+We can modify the pattern to be more verbose but flexible by separating
+the "join" step from the "filter" step.  The tricky part here is ensuring
+that successive instances of ``GrandparentTransformer`` use the same
+:class:`.AliasedClass` object against ``Node``.  Below we use a simple
+memoizing approach that associates a ``GrandparentTransformer``
+with each class::
+
+    class Node(Base):
+
+        # ...
+
+        @grandparent.comparator
+        def grandparent(cls):
+            # memoize a GrandparentTransformer
+            # per class
+            if '_gp' not in cls.__dict__:
+                cls._gp = GrandparentTransformer(cls)
+            return cls._gp
+
+    class GrandparentTransformer(Comparator):
+
+        def __init__(self, cls):
+            self.parent_alias = aliased(cls)
+
+        @property
+        def join(self):
+            def go(q):
+                return q.join(self.parent_alias, Node.parent)
+            return go
+
+        def operate(self, op, other):
+            return op(self.parent_alias.parent, other)
+
+.. sourcecode:: pycon+sql
+
+    {sql}>>> session.query(Node).\\
+    ...            with_transformation(Node.grandparent.join).\\
+    ...            filter(Node.grandparent==Node(id=5))
+    SELECT node.id AS node_id, node.parent_id AS node_parent_id 
+    FROM node JOIN node AS node_1 ON node_1.id = node.parent_id 
+    WHERE :param_1 = node_1.parent_id
+    {stop}
+
+The "transformer" pattern is an experimental pattern that starts
+to make usage of some functional programming paradigms.
+While it's only recommended for advanced and/or patient developers, 
+there's probably a whole lot of amazing things it can be used for.
 
 """
 from sqlalchemy import util
@@ -465,9 +618,13 @@ class hybrid_property(object):
             return self.fget(instance)
 
     def __set__(self, instance, value):
+        if self.fset is None:
+            raise AttributeError("can't set attribute")
         self.fset(instance, value)
 
     def __delete__(self, instance):
+        if self.fdel is None:
+            raise AttributeError("can't delete attribute")
         self.fdel(instance)
 
     def setter(self, fset):

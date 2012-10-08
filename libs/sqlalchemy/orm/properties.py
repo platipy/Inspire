@@ -1,5 +1,5 @@
 # orm/properties.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -19,6 +19,7 @@ from sqlalchemy.orm import attributes, dependency, mapper, \
     object_mapper, strategies, configure_mappers
 from sqlalchemy.orm.util import CascadeOptions, _class_to_mapper, \
     _orm_annotate, _orm_deannotate
+
 from sqlalchemy.orm.interfaces import MANYTOMANY, MANYTOONE, \
     MapperProperty, ONETOMANY, PropComparator, StrategizedProperty
 mapperlib = util.importlater("sqlalchemy.orm", "mapperlib")
@@ -55,10 +56,14 @@ class ColumnProperty(StrategizedProperty):
 
         :param descriptor:
 
+        :param expire_on_flush:
+
         :param extension:
 
         """
-        self.columns = [expression._labeled(c) for c in columns]
+        self._orig_columns = [expression._labeled(c) for c in columns]
+        self.columns = [expression._labeled(_orm_deannotate(c)) 
+                            for c in columns]
         self.group = kwargs.pop('group', None)
         self.deferred = kwargs.pop('deferred', False)
         self.instrument = kwargs.pop('_instrument', True)
@@ -67,6 +72,7 @@ class ColumnProperty(StrategizedProperty):
         self.descriptor = kwargs.pop('descriptor', None)
         self.extension = kwargs.pop('extension', None)
         self.active_history = kwargs.pop('active_history', False)
+        self.expire_on_flush = kwargs.pop('expire_on_flush', True)
 
         if 'doc' in kwargs:
             self.doc = kwargs.pop('doc')
@@ -130,7 +136,9 @@ class ColumnProperty(StrategizedProperty):
 
     def merge(self, session, source_state, source_dict, dest_state, 
                                 dest_dict, load, _recursive):
-        if self.key in source_dict:
+        if not self.instrument:
+            return
+        elif self.key in source_dict:
             value = source_dict[self.key]
 
             if not load:
@@ -138,9 +146,8 @@ class ColumnProperty(StrategizedProperty):
             else:
                 impl = dest_state.get_impl(self.key)
                 impl.set(dest_state, dest_dict, value, None)
-        else:
-            if dest_state.has_identity and self.key not in dest_dict:
-                dest_state.expire_attributes(dest_dict, [self.key])
+        elif dest_state.has_identity and self.key not in dest_dict:
+            dest_state.expire_attributes(dest_dict, [self.key])
 
     class Comparator(PropComparator):
         @util.memoized_instancemethod
@@ -178,6 +185,8 @@ class RelationshipProperty(StrategizedProperty):
     and collection-referencing mapped attributes.
     
     """
+
+    strategy_wildcard_key = 'relationship:*'
 
     def __init__(self, argument,
         secondary=None, primaryjoin=None,
@@ -267,6 +276,7 @@ class RelationshipProperty(StrategizedProperty):
         else:
             self.backref = backref
 
+
     def instrument_class(self, mapper):
         attributes.register_descriptor(
             mapper.class_, 
@@ -312,12 +322,6 @@ class RelationshipProperty(StrategizedProperty):
                 return self.adapter(elem)
             else:
                 return elem
-
-        def operate(self, op, *other, **kwargs):
-            return op(self, *other, **kwargs)
-
-        def reverse_operate(self, op, other, **kwargs):
-            return op(self, *other, **kwargs)
 
         def of_type(self, cls):
             """Produce a construct that represents a particular 'subtype' of
@@ -421,7 +425,7 @@ class RelationshipProperty(StrategizedProperty):
                         source_selectable=source_selectable)
 
             for k in kwargs:
-                crit = self.property.mapper.class_manager[k] == kwargs[k]
+                crit = getattr(self.property.mapper.class_, k) == kwargs[k]
                 if criterion is None:
                     criterion = crit
                 else:
@@ -449,7 +453,8 @@ class RelationshipProperty(StrategizedProperty):
 
             crit = j & criterion
 
-            return sql.exists([1], crit, from_obj=dest).correlate(source)
+            return sql.exists([1], crit, from_obj=dest).\
+                            correlate(source._annotate({'_orm_adapt':True}))
 
         def any(self, criterion=None, **kwargs):
             """Produce an expression that tests a collection against
@@ -730,11 +735,12 @@ class RelationshipProperty(StrategizedProperty):
                     dest_state,
                     dest_dict, 
                     load, _recursive):
+
         if load:
-            # TODO: no test coverage for recursive check
             for r in self._reverse_property:
                 if (source_state, r) in _recursive:
                     return
+
 
         if not "merge" in self.cascade:
             return
@@ -785,6 +791,7 @@ class RelationshipProperty(StrategizedProperty):
                         load=load, _recursive=_recursive)
             else:
                 obj = None
+
             if not load:
                 dest_dict[self.key] = obj
             else:
@@ -1406,6 +1413,7 @@ class RelationshipProperty(StrategizedProperty):
                 **kwargs
                 )
             mapper._configure_property(backref_key, relationship)
+
         if self.back_populates:
             self._add_reverse_property(self.back_populates)
 

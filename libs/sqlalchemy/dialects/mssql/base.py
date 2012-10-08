@@ -1,5 +1,5 @@
 # mssql/base.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -107,10 +107,10 @@ Compatibility Levels
 --------------------
 MSSQL supports the notion of setting compatibility levels at the
 database level. This allows, for instance, to run a database that
-is compatibile with SQL2000 while running on a SQL2005 database
+is compatible with SQL2000 while running on a SQL2005 database
 server. ``server_version_info`` will always return the database
 server version information (in this case SQL2005) and not the
-compatibiility level information. Because of this, if running under
+compatibility level information. Because of this, if running under
 a backwards compatibility mode SQAlchemy may attempt to use T-SQL
 statements that are unable to be parsed by the database server.
 
@@ -146,7 +146,7 @@ Enabling Snapshot Isolation
 
 Not necessarily specific to SQLAlchemy, SQL Server has a default transaction 
 isolation mode that locks entire tables, and causes even mildly concurrent
-applications to have long held locks and frequent deadlocks.   
+applications to have long held locks and frequent deadlocks.
 Enabling snapshot isolation for the database as a whole is recommended 
 for modern levels of concurrency support.  This is accomplished via the 
 following ALTER DATABASE commands executed at the SQL prompt::
@@ -157,7 +157,31 @@ following ALTER DATABASE commands executed at the SQL prompt::
 
 Background on SQL Server snapshot isolation is available at
 http://msdn.microsoft.com/en-us/library/ms175095.aspx.
-  
+
+Scalar Select Comparisons
+-------------------------
+
+.. deprecated:: 0.8
+    The MSSQL dialect contains a legacy behavior whereby comparing
+    a scalar select to a value using the ``=`` or ``!=`` operator
+    will resolve to IN or NOT IN, respectively.  This behavior
+    will be removed in 0.8 - the ``s.in_()``/``~s.in_()`` operators 
+    should be used when IN/NOT IN are desired.
+
+For the time being, the existing behavior prevents a comparison
+between scalar select and another value that actually wants to use ``=``.
+To remove this behavior in a forwards-compatible way, apply this
+compilation rule by placing the following code at the module import
+level::
+
+    from sqlalchemy.ext.compiler import compiles
+    from sqlalchemy.sql.expression import _BinaryExpression
+    from sqlalchemy.sql.compiler import SQLCompiler
+
+    @compiles(_BinaryExpression, 'mssql')
+    def override_legacy_binary(element, compiler, **kw):
+        return SQLCompiler.visit_binary(compiler, element, **kw)
+
 Known Issues
 ------------
 
@@ -171,7 +195,7 @@ import datetime, operator, re
 from sqlalchemy import sql, schema as sa_schema, exc, util
 from sqlalchemy.sql import select, compiler, expression, \
                             operators as sql_operators, \
-                            util as sql_util
+                            util as sql_util, cast
 from sqlalchemy.engine import default, base, reflection
 from sqlalchemy import types as sqltypes
 from sqlalchemy.types import INTEGER, BIGINT, SMALLINT, DECIMAL, NUMERIC, \
@@ -215,7 +239,6 @@ RESERVED_WORDS = set(
      'varying', 'view', 'waitfor', 'when', 'where', 'while', 'with',
      'writetext',
     ])
-
 
 class REAL(sqltypes.REAL):
     __visit_name__ = 'REAL'
@@ -274,7 +297,7 @@ class TIME(sqltypes.TIME):
             return value
         return process
 
-    _reg = re.compile(r"(\d+):(\d+):(\d+)(?:\.(\d+))?")
+    _reg = re.compile(r"(\d+):(\d+):(\d+)(?:\.(\d{0,6}))?")
     def result_processor(self, dialect, coltype):
         def process(value):
             if isinstance(value, datetime.datetime):
@@ -667,18 +690,22 @@ class MSExecutionContext(default.DefaultExecutionContext):
                                         not self.executemany
 
             if self._enable_identity_insert:
-                self.cursor.execute("SET IDENTITY_INSERT %s ON" % 
-                    self.dialect.identifier_preparer.format_table(tbl))
+                self.root_connection._cursor_execute(self.cursor, 
+                    "SET IDENTITY_INSERT %s ON" % 
+                    self.dialect.identifier_preparer.format_table(tbl),
+                    ())
 
     def post_exec(self):
         """Disable IDENTITY_INSERT if enabled."""
 
+        conn = self.root_connection
         if self._select_lastrowid:
             if self.dialect.use_scope_identity:
-                self.cursor.execute(
-                "SELECT scope_identity() AS lastrowid", ())
+                conn._cursor_execute(self.cursor, 
+                    "SELECT scope_identity() AS lastrowid", ())
             else:
-                self.cursor.execute("SELECT @@identity AS lastrowid", ())
+                conn._cursor_execute(self.cursor, 
+                    "SELECT @@identity AS lastrowid", ())
             # fetchall() ensures the cursor is consumed without closing it
             row = self.cursor.fetchall()[0]
             self._lastrowid = int(row[0])
@@ -688,10 +715,11 @@ class MSExecutionContext(default.DefaultExecutionContext):
             self._result_proxy = base.FullyBufferedResultProxy(self)
 
         if self._enable_identity_insert:
-            self.cursor.execute(
+            conn._cursor_execute(self.cursor, 
                         "SET IDENTITY_INSERT %s OFF" %
                             self.dialect.identifier_preparer.
-                                format_table(self.compiled.statement.table)
+                                format_table(self.compiled.statement.table),
+                        ()
                         )
 
     def get_lastrowid(self):
@@ -754,19 +782,22 @@ class MSSQLCompiler(compiler.SQLCompiler):
 
     def get_select_precolumns(self, select):
         """ MS-SQL puts TOP, it's version of LIMIT here """
-        if select._distinct or select._limit:
+        if select._distinct or select._limit is not None:
             s = select._distinct and "DISTINCT " or ""
 
             # ODBC drivers and possibly others
             # don't support bind params in the SELECT clause on SQL Server.
             # so have to use literal here.
-            if select._limit:
+            if select._limit is not None:
                 if not select._offset:
                     s += "TOP %d " % select._limit
             return s
         return compiler.SQLCompiler.get_select_precolumns(self, select)
 
-    def get_from_hint_text(self, text):
+    def get_from_hint_text(self, table, text):
+        return text
+
+    def get_crud_hint_text(self, table, text):
         return text
 
     def limit_clause(self, select):
@@ -782,7 +813,7 @@ class MSSQLCompiler(compiler.SQLCompiler):
             # to use ROW_NUMBER(), an ORDER BY is required.
             orderby = self.process(select._order_by_clause)
             if not orderby:
-                raise exc.InvalidRequestError('MSSQL requires an order_by when '
+                raise exc.CompileError('MSSQL requires an order_by when '
                                               'using an offset.')
 
             _offset = select._offset
@@ -831,6 +862,9 @@ class MSSQLCompiler(compiler.SQLCompiler):
         field = self.extract_map.get(extract.field, extract.field)
         return 'DATEPART("%s", %s)' % \
                         (field, self.process(extract.expr, **kw))
+
+    def visit_savepoint(self, savepoint_stmt):
+        return "SAVE TRANSACTION %s" % self.preparer.format_savepoint(savepoint_stmt)
 
     def visit_rollback_to_savepoint(self, savepoint_stmt):
         return ("ROLLBACK TRANSACTION %s" 
@@ -889,6 +923,10 @@ class MSSQLCompiler(compiler.SQLCompiler):
                     )
                ):
                 op = binary.operator == operator.eq and "IN" or "NOT IN"
+                util.warn_deprecated("Comparing a scalar select using ``=``/``!=`` will "
+                                    "no longer produce IN/NOT IN in 0.8.  To remove this "
+                                    "behavior immediately, use the recipe at "
+                        "http://www.sqlalchemy.org/docs/07/dialects/mssql.html#scalar-select-comparisons")
                 return self.process(
                         expression._BinaryExpression(binary.left,
                                                      binary.right, op),
@@ -920,6 +958,13 @@ class MSSQLCompiler(compiler.SQLCompiler):
         ]
         return 'OUTPUT ' + ', '.join(columns)
 
+    def get_cte_preamble(self, recursive):
+        # SQL Server finds it too inconvenient to accept
+        # an entirely optional, SQL standard specified,
+        # "RECURSIVE" word with their "WITH",
+        # so here we go
+        return "WITH"
+
     def label_select_column(self, select, column, asfrom):
         if isinstance(column, expression.Function):
             return column.label(None)
@@ -940,6 +985,22 @@ class MSSQLCompiler(compiler.SQLCompiler):
             return " ORDER BY " + order_by
         else:
             return ""
+
+    def update_from_clause(self, update_stmt,
+                                from_table, extra_froms,
+                                from_hints,
+                                **kw):
+        """Render the UPDATE..FROM clause specific to MSSQL.
+        
+        In MSSQL, if the UPDATE statement involves an alias of the table to
+        be updated, then the table itself must be added to the FROM list as
+        well. Otherwise, it is optional. Here, we add it regardless.
+        
+        """
+        return "FROM " + ', '.join(
+                    t._compiler_dispatch(self, asfrom=True,
+                                    fromhints=from_hints, **kw)
+                    for t in [from_table] + extra_froms)
 
 class MSSQLStrictCompiler(MSSQLCompiler):
     """A subclass of MSSQLCompiler which disables the usage of bind
@@ -1000,7 +1061,7 @@ class MSDDLCompiler(compiler.DDLCompiler):
                 colspec += " NULL"
 
         if column.table is None:
-            raise exc.InvalidRequestError(
+            raise exc.CompileError(
                             "mssql requires Table-bound columns " 
                             "in order to generate DDL")
 
@@ -1089,12 +1150,12 @@ class MSDialect(default.DefaultDialect):
         super(MSDialect, self).__init__(**opts)
 
     def do_savepoint(self, connection, name):
-        util.warn("Savepoint support in mssql is experimental and "
-                  "may lead to data loss.")
+        # give the DBAPI a push
         connection.execute("IF @@TRANCOUNT = 0 BEGIN TRANSACTION")
-        connection.execute("SAVE TRANSACTION %s" % name)
+        super(MSDialect, self).do_savepoint(connection, name)
 
     def do_release_savepoint(self, connection, name):
+        # SQL Server does not support RELEASE SAVEPOINT
         pass
 
     def initialize(self, connection):
@@ -1131,15 +1192,20 @@ class MSDialect(default.DefaultDialect):
                 pass
         return self.schema_name
 
+    def _unicode_cast(self, column):
+        if self.server_version_info >= MS_2005_VERSION:
+            return cast(column, NVARCHAR(_warn_on_bytestring=False))
+        else:
+            return column
 
     def has_table(self, connection, tablename, schema=None):
         current_schema = schema or self.default_schema_name
         columns = ischema.columns
+
+        whereclause = self._unicode_cast(columns.c.table_name)==tablename
         if current_schema:
-            whereclause = sql.and_(columns.c.table_name==tablename,
+            whereclause = sql.and_(whereclause,
                                    columns.c.table_schema==current_schema)
-        else:
-            whereclause = columns.c.table_name==tablename
         s = sql.select([columns], whereclause)
         c = connection.execute(s)
         return c.first() is not None
@@ -1203,7 +1269,10 @@ class MSDialect(default.DefaultDialect):
                                     sqltypes.String(convert_unicode=True)),
                     sql.bindparam('schname', current_schema, 
                                     sqltypes.String(convert_unicode=True))
-                ]
+                ],
+                typemap = {
+                    'name':sqltypes.Unicode()
+                }
             )
         )
         indexes = {}
@@ -1229,7 +1298,11 @@ class MSDialect(default.DefaultDialect):
                                     sqltypes.String(convert_unicode=True)),
                             sql.bindparam('schname', current_schema, 
                                     sqltypes.String(convert_unicode=True))
-                        ]),
+                        ],
+                        typemap = {
+                            'name':sqltypes.Unicode()
+                        }
+                        ),
             )
         for row in rp:
             if row['index_id'] in indexes:

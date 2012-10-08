@@ -1,5 +1,5 @@
 # sqlalchemy/pool.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -56,6 +56,10 @@ def clear_managers():
     for manager in proxies.itervalues():
         manager.close()
     proxies.clear()
+
+reset_rollback = util.symbol('reset_rollback')
+reset_commit = util.symbol('reset_commit')
+reset_none = util.symbol('reset_none')
 
 
 class Pool(log.Identified):
@@ -130,7 +134,17 @@ class Pool(log.Identified):
         self._creator = creator
         self._recycle = recycle
         self._use_threadlocal = use_threadlocal
-        self._reset_on_return = reset_on_return
+        if reset_on_return in ('rollback', True, reset_rollback):
+            self._reset_on_return = reset_rollback
+        elif reset_on_return in (None, False, reset_none):
+            self._reset_on_return = reset_none
+        elif reset_on_return in ('commit', reset_commit):
+            self._reset_on_return = reset_commit
+        else:
+            raise exc.ArgumentError(
+                        "Invalid value for 'reset_on_return': %r" 
+                                    % reset_on_return)
+
         self.echo = echo
         if _dispatch:
             self.dispatch._update(_dispatch, only_propagate=False)
@@ -189,9 +203,10 @@ class Pool(log.Identified):
         """Dispose of this pool.
 
         This method leaves the possibility of checked-out connections
-        remaining open, It is advised to not reuse the pool once dispose()
-        is called, and to instead use a new pool constructed by the
-        recreate() method.
+        remaining open, as it only affects connections that are
+        idle in the pool.
+        
+        See also the :meth:`Pool.recreate` method.
 
         """
 
@@ -329,8 +344,10 @@ def _finalize_fairy(connection, connection_record, pool, ref, echo):
 
     if connection is not None:
         try:
-            if pool._reset_on_return:
+            if pool._reset_on_return is reset_rollback:
                 connection.rollback()
+            elif pool._reset_on_return is reset_commit:
+                connection.commit()
             # Immediately close detached instances
             if connection_record is None:
                 connection.close()
@@ -371,7 +388,7 @@ class _ConnectionFairy(object):
             conn = self.connection = self._connection_record.get_connection()
             rec.fairy = weakref.ref(
                             self, 
-                            lambda ref:_finalize_fairy(conn, rec, pool, ref, _echo)
+                            lambda ref:_finalize_fairy and _finalize_fairy(conn, rec, pool, ref, _echo)
                         )
             _refs.add(rec)
         except:
@@ -512,7 +529,7 @@ class SingletonThreadPool(Pool):
 
     def recreate(self):
         self.logger.info("Pool recreating")
-        return SingletonThreadPool(self._creator, 
+        return self.__class__(self._creator, 
             pool_size=self.size, 
             recycle=self._recycle, 
             echo=self.echo, 
@@ -623,10 +640,38 @@ class QueuePool(Pool):
           :meth:`unique_connection` method is provided to bypass the
           threadlocal behavior installed into :meth:`connect`.
 
-        :param reset_on_return: If true, reset the database state of
-          connections returned to the pool.  This is typically a
-          ROLLBACK to release locks and transaction resources.
-          Disable at your own peril.  Defaults to True.
+        :param reset_on_return: Determine steps to take on 
+          connections as they are returned to the pool.   
+          reset_on_return can have any of these values:
+
+          * 'rollback' - call rollback() on the connection,
+            to release locks and transaction resources.
+            This is the default value.  The vast majority
+            of use cases should leave this value set.
+          * True - same as 'rollback', this is here for 
+            backwards compatibility.
+          * 'commit' - call commit() on the connection,
+            to release locks and transaction resources. 
+            A commit here may be desirable for databases that
+            cache query plans if a commit is emitted,
+            such as Microsoft SQL Server.  However, this
+            value is more dangerous than 'rollback' because
+            any data changes present on the transaction
+            are committed unconditionally.
+          * None - don't do anything on the connection.
+            This setting should only be made on a database
+            that has no transaction support at all,
+            namely MySQL MyISAM.   By not doing anything,
+            performance can be improved.   This
+            setting should **never be selected** for a 
+            database that supports transactions,
+            as it will lead to deadlocks and stale
+            state.
+          * False - same as None, this is here for
+            backwards compatibility.
+
+          .. versionchanged:: 0.7.6
+              ``reset_on_return`` accepts values.
 
         :param listeners: A list of
           :class:`~sqlalchemy.interfaces.PoolListener`-like objects or
@@ -645,7 +690,7 @@ class QueuePool(Pool):
 
     def recreate(self):
         self.logger.info("Pool recreating")
-        return QueuePool(self._creator, pool_size=self._pool.maxsize, 
+        return self.__class__(self._creator, pool_size=self._pool.maxsize, 
                           max_overflow=self._max_overflow,
                           timeout=self._timeout, 
                           recycle=self._recycle, echo=self.echo, 
@@ -741,9 +786,9 @@ class NullPool(Pool):
     invalidation are not supported by this Pool implementation, since
     no connections are held persistently.
 
-    :class:`.NullPool` is used by the SQlite dilalect automatically
-    when a file-based database is used (as of SQLAlchemy 0.7).
-    See :ref:`sqlite_toplevel`.
+    .. versionchanged:: 0.7
+        :class:`.NullPool` is used by the SQlite dialect automatically
+        when a file-based database is used. See :ref:`sqlite_toplevel`.
 
     """
 
@@ -759,7 +804,7 @@ class NullPool(Pool):
     def recreate(self):
         self.logger.info("Pool recreating")
 
-        return NullPool(self._creator, 
+        return self.__class__(self._creator, 
             recycle=self._recycle, 
             echo=self.echo, 
             logging_name=self._orig_logging_name,
@@ -822,10 +867,11 @@ class AssertionPool(Pool):
     This will raise an exception if more than one connection is checked out
     at a time.  Useful for debugging code that is using more connections
     than desired.
-    
-    :class:`.AssertionPool` also logs a traceback of where
-    the original connection was checked out, and reports
-    this in the assertion error raised (new in 0.7).
+
+    .. versionchanged:: 0.7
+        :class:`.AssertionPool` also logs a traceback of where
+        the original connection was checked out, and reports
+        this in the assertion error raised.
 
     """
     def __init__(self, *args, **kw):
@@ -851,7 +897,7 @@ class AssertionPool(Pool):
 
     def recreate(self):
         self.logger.info("Pool recreating")
-        return AssertionPool(self._creator, echo=self.echo, 
+        return self.__class__(self._creator, echo=self.echo, 
                             logging_name=self._orig_logging_name,
                             _dispatch=self.dispatch)
 
@@ -917,6 +963,7 @@ class _DBProxy(object):
             self._create_pool_mutex.acquire()
             try:
                 if key not in self.pools:
+                    kw.pop('sa_pool_key', None)
                     pool = self.poolclass(lambda: 
                                 self.module.connect(*args, **kw), **self.kw)
                     self.pools[key] = pool
@@ -952,6 +999,9 @@ class _DBProxy(object):
             pass
 
     def _serialize(self, *args, **kw):
+        if "sa_pool_key" in kw:
+            return kw['sa_pool_key']
+
         return tuple(
             list(args) + 
             [(k, kw[k]) for k in sorted(kw)]

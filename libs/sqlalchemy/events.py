@@ -1,12 +1,15 @@
 # sqlalchemy/events.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
 
 """Core event interfaces."""
 
-from sqlalchemy import event, exc
+from sqlalchemy import event, exc, util
+engine = util.importlater('sqlalchemy', 'engine')
+pool = util.importlater('sqlalchemy', 'pool')
+
 
 class DDLEvents(event.Events):
     """
@@ -75,10 +78,11 @@ class DDLEvents(event.Events):
         :param connection: the :class:`.Connection` where the
          CREATE statement or statements will be emitted.
         :param \**kw: additional keyword arguments relevant
-         to the event.  Currently this includes the ``tables``
-         argument in the case of a :class:`.MetaData` object,
-         which is the list of :class:`.Table` objects for which
-         CREATE will be emitted.
+         to the event.  The contents of this dictionary
+         may vary across releases, and include the
+         list of tables being generated for a metadata-level
+         event, the checkfirst flag, and other 
+         elements used by internal events.
 
         """
 
@@ -90,10 +94,11 @@ class DDLEvents(event.Events):
         :param connection: the :class:`.Connection` where the
          CREATE statement or statements have been emitted.
         :param \**kw: additional keyword arguments relevant
-         to the event.  Currently this includes the ``tables``
-         argument in the case of a :class:`.MetaData` object,
-         which is the list of :class:`.Table` objects for which
-         CREATE has been emitted.
+         to the event.  The contents of this dictionary
+         may vary across releases, and include the
+         list of tables being generated for a metadata-level
+         event, the checkfirst flag, and other 
+         elements used by internal events.
 
         """
 
@@ -105,10 +110,11 @@ class DDLEvents(event.Events):
         :param connection: the :class:`.Connection` where the
          DROP statement or statements will be emitted.
         :param \**kw: additional keyword arguments relevant
-         to the event.  Currently this includes the ``tables``
-         argument in the case of a :class:`.MetaData` object,
-         which is the list of :class:`.Table` objects for which
-         DROP will be emitted.
+         to the event.  The contents of this dictionary
+         may vary across releases, and include the
+         list of tables being generated for a metadata-level
+         event, the checkfirst flag, and other 
+         elements used by internal events.
 
         """
 
@@ -120,10 +126,11 @@ class DDLEvents(event.Events):
         :param connection: the :class:`.Connection` where the
          DROP statement or statements have been emitted.
         :param \**kw: additional keyword arguments relevant
-         to the event.  Currently this includes the ``tables``
-         argument in the case of a :class:`.MetaData` object,
-         which is the list of :class:`.Table` objects for which
-         DROP has been emitted.
+         to the event.  The contents of this dictionary
+         may vary across releases, and include the
+         list of tables being generated for a metadata-level
+         event, the checkfirst flag, and other 
+         elements used by internal events.
 
         """
 
@@ -241,7 +248,7 @@ class PoolEvents(event.Events):
         def my_on_checkout(dbapi_conn, connection_rec, connection_proxy):
             "handle an on checkout event"
 
-        events.listen(Pool, 'checkout', my_on_checkout)
+        event.listen(Pool, 'checkout', my_on_checkout)
 
     In addition to accepting the :class:`.Pool` class and :class:`.Pool` instances,
     :class:`.PoolEvents` also accepts :class:`.Engine` objects and
@@ -252,21 +259,18 @@ class PoolEvents(event.Events):
         engine = create_engine("postgresql://scott:tiger@localhost/test")
 
         # will associate with engine.pool
-        events.listen(engine, 'checkout', my_on_checkout)
+        event.listen(engine, 'checkout', my_on_checkout)
 
     """
 
     @classmethod
     def _accept_with(cls, target):
-        from sqlalchemy.engine import Engine
-        from sqlalchemy.pool import Pool
-
         if isinstance(target, type):
-            if issubclass(target, Engine):
-                return Pool
-            elif issubclass(target, Pool):
+            if issubclass(target, engine.Engine):
+                return pool.Pool
+            elif issubclass(target, pool.Pool):
                 return target
-        elif isinstance(target, Engine):
+        elif isinstance(target, engine.Engine):
             return target.pool
         else:
             return target
@@ -308,7 +312,7 @@ class PoolEvents(event.Events):
           The ``_ConnectionFairy`` which manages the connection for the span of
           the current checkout.
 
-        If you raise an ``exc.DisconnectionError``, the current
+        If you raise a :class:`~sqlalchemy.exc.DisconnectionError`, the current
         connection will be disposed and a fresh connection retrieved.
         Processing of all checkout listeners will abort and restart
         using the new connection.
@@ -396,6 +400,36 @@ class ConnectionEvents(event.Events):
     def after_cursor_execute(self, conn, cursor, statement, 
                         parameters, context, executemany):
         """Intercept low-level cursor execute() events."""
+
+    def dbapi_error(self, conn, cursor, statement, parameters, 
+                        context, exception):
+        """Intercept a raw DBAPI error.
+        
+        This event is called with the DBAPI exception instance 
+        received from the DBAPI itself, *before* SQLAlchemy wraps the 
+        exception with it's own exception wrappers, and before any
+        other operations are performed on the DBAPI cursor; the
+        existing transaction remains in effect as well as any state
+        on the cursor.
+        
+        The use case here is to inject low-level exception handling
+        into an :class:`.Engine`, typically for logging and
+        debugging purposes.   In general, user code should **not** modify
+        any state or throw any exceptions here as this will
+        interfere with SQLAlchemy's cleanup and error handling
+        routines.
+        
+        Subsequent to this hook, SQLAlchemy may attempt any
+        number of operations on the connection/cursor, including
+        closing the cursor, rolling back of the transaction in the 
+        case of connectionless execution, and disposing of the entire
+        connection pool if a "disconnect" was detected.   The
+        exception is then wrapped in a SQLAlchemy DBAPI exception
+        wrapper and re-thrown.
+        
+        .. versionadded:: 0.7.7
+
+        """
 
     def begin(self, conn):
         """Intercept begin() events."""

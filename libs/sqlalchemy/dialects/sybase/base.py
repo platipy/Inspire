@@ -10,8 +10,12 @@
 
 """Support for Sybase Adaptive Server Enterprise (ASE).
 
-Note that this dialect is no longer specific to Sybase iAnywhere.
-ASE is the primary support platform.
+.. note::
+
+    The Sybase dialect functions on current SQLAlchemy versions
+    but is not regularly tested, and may have many issues and 
+    caveats not currently handled.   In particular, the table
+    and database reflection features are not implemented.
 
 """
 
@@ -321,7 +325,7 @@ class SybaseDDLCompiler(compiler.DDLCompiler):
                         self.dialect.type_compiler.process(column.type)
 
         if column.table is None:
-            raise exc.InvalidRequestError(
+            raise exc.CompileError(
                         "The Sybase dialect requires Table-bound "
                        "columns in order to generate DDL")
         seq_col = column.table._autoincrement_column

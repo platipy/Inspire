@@ -1,5 +1,5 @@
 # connectors/pyodbc.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -29,9 +29,17 @@ class PyODBCConnector(Connector):
     # if the freetds.so is detected
     freetds = False
 
+    # will be set to the string version of
+    # the FreeTDS driver if freetds is detected
+    freetds_driver_version = None
+
     # will be set to True after initialize()
     # if the libessqlsrv.so is detected
     easysoft = False
+
+    def __init__(self, supports_unicode_binds=None, **kw):
+        super(PyODBCConnector, self).__init__(**kw)
+        self._user_supports_unicode_binds = supports_unicode_binds
 
     @classmethod
     def dbapi(cls):
@@ -108,15 +116,40 @@ class PyODBCConnector(Connector):
         self.easysoft = bool(re.match(r".*libessqlsrv.*\.so", _sql_driver_name
                             ))
 
+        if self.freetds:
+            self.freetds_driver_version = dbapi_con.getinfo(pyodbc.SQL_DRIVER_VER)
+
         # the "Py2K only" part here is theoretical.
         # have not tried pyodbc + python3.1 yet.
         # Py2K
         self.supports_unicode_statements = not self.freetds and not self.easysoft
-        self.supports_unicode_binds = not self.freetds and not self.easysoft
+        if self._user_supports_unicode_binds is not None:
+            self.supports_unicode_binds = self._user_supports_unicode_binds
+        else:
+            self.supports_unicode_binds = (not self.freetds or 
+                                            self.freetds_driver_version >= '0.91'
+                                            ) and not self.easysoft
         # end Py2K
 
         # run other initialization which asks for user name, etc.
         super(PyODBCConnector, self).initialize(connection)
+
+    def _dbapi_version(self):
+        if not self.dbapi:
+            return ()
+        return self._parse_dbapi_version(self.dbapi.version)
+
+    def _parse_dbapi_version(self, vers):
+        m = re.match(
+                r'(?:py.*-)?([\d\.]+)(?:-(\w+))?',
+                vers
+            )
+        if not m:
+            return ()
+        vers = tuple([int(x) for x in m.group(1).split(".")])
+        if m.group(2):
+            vers += (m.group(2),)
+        return vers
 
     def _get_server_version_info(self, connection):
         dbapi_con = connection.connection

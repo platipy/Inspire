@@ -1,5 +1,5 @@
 # engine/strategies.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -24,7 +24,7 @@ strategies = {}
 
 
 class EngineStrategy(object):
-    """An adaptor that processes input arguements and produces an Engine.
+    """An adaptor that processes input arguments and produces an Engine.
 
     Provides a ``create`` method that receives input arguments and
     produces an instance of base.Engine or a subclass.
@@ -41,7 +41,7 @@ class EngineStrategy(object):
 
 
 class DefaultEngineStrategy(EngineStrategy):
-    """Base class for built-in stratgies."""
+    """Base class for built-in strategies."""
 
     def create(self, name_or_url, **kwargs):
         # create url.URL object
@@ -108,7 +108,8 @@ class DefaultEngineStrategy(EngineStrategy):
                          'timeout': 'pool_timeout',
                          'recycle': 'pool_recycle',
                          'events':'pool_events',
-                         'use_threadlocal':'pool_threadlocal'}
+                         'use_threadlocal':'pool_threadlocal',
+                         'reset_on_return':'pool_reset_on_return'}
             for k in util.get_cls_kwargs(poolclass):
                 tk = translate.get(k, k)
                 if tk in kwargs:
@@ -179,7 +180,7 @@ PlainEngineStrategy()
 
 
 class ThreadLocalEngineStrategy(DefaultEngineStrategy):
-    """Strategy for configuring an Engine with thredlocal behavior."""
+    """Strategy for configuring an Engine with threadlocal behavior."""
 
     name = 'threadlocal'
     engine_cls = threadlocal.TLEngine
@@ -226,6 +227,9 @@ class MockEngineStrategy(EngineStrategy):
         def contextual_connect(self, **kwargs):
             return self
 
+        def execution_options(self, **kw):
+            return self
+
         def compiler(self, statement, parameters, **kwargs):
             return self._dialect.compiler(
                 statement, parameters, engine=self, **kwargs)
@@ -234,19 +238,19 @@ class MockEngineStrategy(EngineStrategy):
             kwargs['checkfirst'] = False
             from sqlalchemy.engine import ddl
 
-            ddl.SchemaGenerator(self.dialect, self, **kwargs).traverse(entity)
+            ddl.SchemaGenerator(self.dialect, self, **kwargs).traverse_single(entity)
 
         def drop(self, entity, **kwargs):
             kwargs['checkfirst'] = False
             from sqlalchemy.engine import ddl
-            ddl.SchemaDropper(self.dialect, self, **kwargs).traverse(entity)
+            ddl.SchemaDropper(self.dialect, self, **kwargs).traverse_single(entity)
 
         def _run_visitor(self, visitorcallable, element, 
                                         connection=None, 
                                         **kwargs):
             kwargs['checkfirst'] = False
             visitorcallable(self.dialect, self,
-                                **kwargs).traverse(element)
+                                **kwargs).traverse_single(element)
 
         def execute(self, object, *multiparams, **params):
             raise NotImplementedError()

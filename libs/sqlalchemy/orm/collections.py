@@ -1,5 +1,5 @@
 # orm/collections.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -111,7 +111,6 @@ import weakref
 from sqlalchemy.sql import expression
 from sqlalchemy import schema, util, exc as sa_exc
 
-
 __all__ = ['collection', 'collection_adapter',
            'mapped_collection', 'column_mapped_collection',
            'attribute_mapped_collection']
@@ -119,10 +118,108 @@ __all__ = ['collection', 'collection_adapter',
 __instrumentation_mutex = util.threading.Lock()
 
 
+class _PlainColumnGetter(object):
+    """Plain column getter, stores collection of Column objects
+    directly.
+
+    Serializes to a :class:`._SerializableColumnGetterV2`
+    which has more expensive __call__() performance
+    and some rare caveats.
+
+    """
+    def __init__(self, cols):
+        self.cols = cols
+        self.composite = len(cols) > 1
+
+    def __reduce__(self):
+        return _SerializableColumnGetterV2._reduce_from_cols(self.cols)
+
+    def _cols(self, mapper):
+        return self.cols
+
+    def __call__(self, value):
+        state = instance_state(value)
+        m = _state_mapper(state)
+
+        key = [
+            m._get_state_attr_by_column(state, state.dict, col)
+            for col in self._cols(m)
+        ]
+
+        if self.composite:
+            return tuple(key)
+        else:
+            return key[0]
+
+class _SerializableColumnGetter(object):
+    """Column-based getter used in version 0.7.6 only.
+
+    Remains here for pickle compatibility with 0.7.6.
+
+    """
+    def __init__(self, colkeys):
+        self.colkeys = colkeys
+        self.composite = len(colkeys) > 1
+    def __reduce__(self):
+        return _SerializableColumnGetter, (self.colkeys,)
+    def __call__(self, value):
+        state = instance_state(value)
+        m = _state_mapper(state)
+        key = [m._get_state_attr_by_column(
+                        state, state.dict, 
+                        m.mapped_table.columns[k])
+                     for k in self.colkeys]
+        if self.composite:
+            return tuple(key)
+        else:
+            return key[0]
+
+class _SerializableColumnGetterV2(_PlainColumnGetter):
+    """Updated serializable getter which deals with 
+    multi-table mapped classes.
+
+    Two extremely unusual cases are not supported.
+    Mappings which have tables across multiple metadata
+    objects, or which are mapped to non-Table selectables
+    linked across inheriting mappers may fail to function
+    here.
+
+    """
+
+    def __init__(self, colkeys):
+        self.colkeys = colkeys
+        self.composite = len(colkeys) > 1
+
+    def __reduce__(self):
+        return self.__class__, (self.colkeys,)
+
+    @classmethod
+    def _reduce_from_cols(cls, cols):
+        def _table_key(c):
+            if not isinstance(c.table, expression.TableClause):
+                return None
+            else:
+                return c.table.key
+        colkeys = [(c.key, _table_key(c)) for c in cols]
+        return _SerializableColumnGetterV2, (colkeys,)
+
+    def _cols(self, mapper):
+        cols = []
+        metadata = getattr(mapper.local_table, 'metadata', None)
+        for (ckey, tkey) in self.colkeys:
+            if tkey is None or \
+                metadata is None or \
+                tkey not in metadata:
+                cols.append(mapper.local_table.c[ckey])
+            else:
+                cols.append(metadata.tables[tkey].c[ckey])
+        return cols
+
+
 def column_mapped_collection(mapping_spec):
     """A dictionary-based collection type with column-based keying.
 
-    Returns a MappedCollection factory with a keying function generated
+    Returns a :class:`.MappedCollection` factory with a keying function generated
     from mapping_spec, which may be a Column or a sequence of Columns.
 
     The key value must be immutable for the lifetime of the object.  You
@@ -131,29 +228,31 @@ def column_mapped_collection(mapping_spec):
     after a session flush.
 
     """
+    global _state_mapper, instance_state
     from sqlalchemy.orm.util import _state_mapper
     from sqlalchemy.orm.attributes import instance_state
 
-    cols = [expression._only_column_elements(q, "mapping_spec") 
-                for q in util.to_list(mapping_spec)]
-    if len(cols) == 1:
-        def keyfunc(value):
-            state = instance_state(value)
-            m = _state_mapper(state)
-            return m._get_state_attr_by_column(state, state.dict, cols[0])
-    else:
-        mapping_spec = tuple(cols)
-        def keyfunc(value):
-            state = instance_state(value)
-            m = _state_mapper(state)
-            return tuple(m._get_state_attr_by_column(state, state.dict, c)
-                         for c in mapping_spec)
+    cols = [expression._only_column_elements(q, "mapping_spec")
+                for q in util.to_list(mapping_spec)
+            ]
+    keyfunc = _PlainColumnGetter(cols)
     return lambda: MappedCollection(keyfunc)
+
+class _SerializableAttrGetter(object):
+    def __init__(self, name):
+        self.name = name
+        self.getter = operator.attrgetter(name)
+
+    def __call__(self, target):
+        return self.getter(target)
+
+    def __reduce__(self):
+        return _SerializableAttrGetter, (self.name, )
 
 def attribute_mapped_collection(attr_name):
     """A dictionary-based collection type with attribute-based keying.
 
-    Returns a MappedCollection factory with a keying based on the
+    Returns a :class:`.MappedCollection` factory with a keying based on the
     'attr_name' attribute of entities in the collection, where ``attr_name``
     is the string name of the attribute.
 
@@ -163,13 +262,14 @@ def attribute_mapped_collection(attr_name):
     after a session flush.
 
     """
-    return lambda: MappedCollection(operator.attrgetter(attr_name))
+    getter = _SerializableAttrGetter(attr_name)
+    return lambda: MappedCollection(getter)
 
 
 def mapped_collection(keyfunc):
     """A dictionary-based collection type with arbitrary keying.
 
-    Returns a MappedCollection factory with a keying function generated
+    Returns a :class:`.MappedCollection` factory with a keying function generated
     from keyfunc, a callable that takes an entity and returns a key value.
 
     The key value must be immutable for the lifetime of the object.  You
@@ -200,10 +300,6 @@ class collection(object):
 
         @collection.removes_return()
         def popitem(self): ...
-
-    Decorators can be specified in long-hand for Python 2.3, or with
-    the class-level dict attribute '__instrumentation__'- see the source
-    for details.
 
     """
     # Bundled as a class solely for ease of use: packaging, doc strings,
@@ -474,7 +570,7 @@ class CollectionAdapter(object):
     to the underlying Python collection, and emits add/remove events for
     entities entering or leaving the collection.
 
-    The ORM uses an CollectionAdapter exclusively for interaction with
+    The ORM uses :class:`.CollectionAdapter` exclusively for interaction with
     entity collections.
 
     The usage of getattr()/setattr() is currently to allow injection
@@ -664,14 +760,11 @@ def bulk_replace(values, existing_adapter, new_adapter):
     instances in ``existing_adapter`` not present in ``values`` will have
     remove events fired upon them.
 
-    values
-      An iterable of collection member instances
+    :param values: An iterable of collection member instances
 
-    existing_adapter
-      A CollectionAdapter of instances to be replaced
+    :param existing_adapter: A :class:`.CollectionAdapter` of instances to be replaced
 
-    new_adapter
-      An empty CollectionAdapter to load with ``values``
+    :param new_adapter: An empty :class:`.CollectionAdapter` to load with ``values``
 
 
     """
@@ -821,6 +914,7 @@ def _instrument_class(cls):
             methods[name] = None, None, after
 
     # apply ABC auto-decoration to methods that need it
+
     for method, decorator in decorators.items():
         fn = getattr(cls, method, None)
         if (fn and method not in methods and
@@ -1173,7 +1267,7 @@ def _dict_decorators():
     l.pop('Unspecified')
     return l
 
-if util.py3k:
+if util.py3k_warning:
     _set_binop_bases = (set, frozenset)
 else:
     import sets
@@ -1472,3 +1566,13 @@ class MappedCollection(dict):
                     incoming_key, value, new_key))
             yield value
     _convert = collection.converter(_convert)
+
+# ensure instrumentation is associated with
+# these built-in classes; if a user-defined class
+# subclasses these and uses @internally_instrumented,
+# the superclass is otherwise not instrumented.
+# see [ticket:2406].
+_instrument_class(MappedCollection)
+_instrument_class(InstrumentedList)
+_instrument_class(InstrumentedSet)
+

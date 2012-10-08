@@ -1,14 +1,15 @@
 # maxdb/base.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
 
 """Support for the MaxDB database.
 
-This dialect is *not* ported to SQLAlchemy 0.6 or 0.7.
+.. note::
 
-This dialect is *not* tested on SQLAlchemy 0.6 or 0.7.
+    The MaxDB dialect is **non-functional as of SQLAlchemy 0.6**, 
+    pending development efforts to bring it up-to-date.
 
 Overview
 --------
@@ -635,7 +636,7 @@ class MaxDBCompiler(compiler.SQLCompiler):
                 # LIMIT.  Right?  Other dialects seem to get away with
                 # dropping order.
                 if select._limit:
-                    raise exc.InvalidRequestError(
+                    raise exc.CompileError(
                         "MaxDB does not support ORDER BY in subqueries")
                 else:
                     return ""

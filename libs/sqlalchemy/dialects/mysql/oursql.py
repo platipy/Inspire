@@ -1,5 +1,5 @@
 # mysql/oursql.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -17,8 +17,8 @@ Connect string format::
 
     mysql+oursql://<user>:<password>@<host>[:<port>]/<dbname>
 
-Character Sets
---------------
+Unicode
+-------
 
 oursql defaults to using ``utf8`` as the connection charset, but other
 encodings may be used instead. Like the MySQL-Python driver, unicode support

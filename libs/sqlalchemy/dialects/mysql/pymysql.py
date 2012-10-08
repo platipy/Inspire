@@ -1,5 +1,5 @@
 # mysql/pymysql.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -31,6 +31,7 @@ from sqlalchemy.dialects.mysql.mysqldb import MySQLDialect_mysqldb
 class MySQLDialect_pymysql(MySQLDialect_mysqldb): 
     driver = 'pymysql'
 
+    description_encoding = None
     @classmethod 
     def dbapi(cls): 
         return __import__('pymysql') 

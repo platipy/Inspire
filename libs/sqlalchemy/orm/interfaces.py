@@ -1,5 +1,5 @@
 # orm/interfaces.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -21,7 +21,7 @@ from itertools import chain
 from sqlalchemy import exc as sa_exc
 from sqlalchemy import util
 from sqlalchemy.sql import operators
-deque = util.importlater('collections').deque
+deque = __import__('collections').deque
 
 mapperutil = util.importlater('sqlalchemy.orm', 'util')
 
@@ -61,6 +61,13 @@ class MapperProperty(object):
     attribute, as well as that attribute as it appears on individual
     instances of the class, including attribute instrumentation,
     attribute access, loading behavior, and dependency calculations.
+    
+    The most common occurrences of :class:`.MapperProperty` are the
+    mapped :class:`.Column`, which is represented in a mapping as 
+    an instance of :class:`.ColumnProperty`,
+    and a reference to another class produced by :func:`.relationship`,
+    represented in the mapping as an instance of :class:`.RelationshipProperty`.
+    
     """
 
     cascade = ()
@@ -244,8 +251,7 @@ class PropComparator(operators.ColumnOperators):
             query.join(Company.employees.of_type(Engineer)).\\
                filter(Engineer.name=='foo')
 
-        \class_
-            a class or mapper indicating that criterion will be against
+        :param \class_: a class or mapper indicating that criterion will be against
             this specific subclass.
 
 
@@ -257,13 +263,16 @@ class PropComparator(operators.ColumnOperators):
         """Return true if this collection contains any member that meets the
         given criterion.
 
-        criterion
-          an optional ClauseElement formulated against the member class' table
-          or attributes.
+        The usual implementation of ``any()`` is 
+        :meth:`.RelationshipProperty.Comparator.any`.
 
-        \**kwargs
-          key/value pairs corresponding to member class attribute names which
-          will be compared via equality to the corresponding values.
+        :param criterion: an optional ClauseElement formulated against the 
+          member class' table or attributes.
+
+        :param \**kwargs: key/value pairs corresponding to member class attribute 
+          names which will be compared via equality to the corresponding
+          values.
+
         """
 
         return self.operate(PropComparator.any_op, criterion, **kwargs)
@@ -272,13 +281,16 @@ class PropComparator(operators.ColumnOperators):
         """Return true if this element references a member which meets the
         given criterion.
 
-        criterion
-          an optional ClauseElement formulated against the member class' table
-          or attributes.
+        The usual implementation of ``has()`` is 
+        :meth:`.RelationshipProperty.Comparator.has`.
 
-        \**kwargs
-          key/value pairs corresponding to member class attribute names which
-          will be compared via equality to the corresponding values.
+        :param criterion: an optional ClauseElement formulated against the 
+          member class' table or attributes.
+
+        :param \**kwargs: key/value pairs corresponding to member class attribute 
+          names which will be compared via equality to the corresponding
+          values.
+
         """
 
         return self.operate(PropComparator.has_op, criterion, **kwargs)
@@ -294,16 +306,24 @@ class StrategizedProperty(MapperProperty):
 
     """
 
+    strategy_wildcard_key = None
+
     def _get_context_strategy(self, context, reduced_path):
         key = ('loaderstrategy', reduced_path)
+        cls = None
         if key in context.attributes:
             cls = context.attributes[key]
+        elif self.strategy_wildcard_key:
+            key = ('loaderstrategy', (self.strategy_wildcard_key,))
+            if key in context.attributes:
+                cls = context.attributes[key]
+
+        if cls:
             try:
                 return self._strategies[cls]
             except KeyError:
                 return self.__init_strategy(cls)
-        else:
-            return self.strategy
+        return self.strategy
 
     def _get_strategy(self, cls):
         try:
@@ -380,7 +400,8 @@ class MapperOption(object):
 
 class PropertyOption(MapperOption):
     """A MapperOption that is applied to a property off the mapper or
-    one of its child mappers, identified by a dot-separated key. """
+    one of its child mappers, identified by a dot-separated key
+    or list of class-bound attributes. """
 
     def __init__(self, key, mapper=None):
         self.key = key
@@ -481,6 +502,9 @@ class PropertyOption(MapperOption):
         while tokens:
             token = tokens.popleft()
             if isinstance(token, basestring):
+                # wildcard token
+                if token.endswith(':*'):
+                    return [(token,)], []
                 sub_tokens = token.split(".", 1)
                 token = sub_tokens[0]
                 tokens.extendleft(sub_tokens[1:])
@@ -504,8 +528,8 @@ class PropertyOption(MapperOption):
                     path_element = entity.path_entity
                     mapper = entity.mapper
                 mappers.append(mapper)
-                if mapper.has_property(token):
-                    prop = mapper.get_property(token)
+                if hasattr(mapper.class_, token):
+                    prop = getattr(mapper.class_, token).property
                 else:
                     if raiseerr:
                         raise sa_exc.ArgumentError(
@@ -544,7 +568,12 @@ class PropertyOption(MapperOption):
                         "mapper option expects "
                         "string key or list of attributes")
             assert prop is not None
+            if raiseerr and not prop.parent.common_parent(mapper):
+                raise sa_exc.ArgumentError("Attribute '%s' does not "
+                            "link from element '%s'" % (token, path_element))
+
             path = build_path(path_element, prop.key, path)
+
             l.append(path)
             if getattr(token, '_of_type', None):
                 path_element = mapper = token._of_type
@@ -556,8 +585,6 @@ class PropertyOption(MapperOption):
                         "refer to a mapped entity" %
                         (token, entity)
                     )
-            if path_element:
-                path_element = path_element
 
         if current_path:
             # ran out of tokens before 

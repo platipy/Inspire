@@ -1,5 +1,5 @@
 # orm/session.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -99,21 +99,42 @@ def sessionmaker(bind=None, class_=None, autoflush=True, autocommit=False,
             kwargs.update(new_kwargs)
 
 
-    return type("Session", (Sess, class_), {})
+    return type("SessionMaker", (Sess, class_), {})
 
 
 class SessionTransaction(object):
     """A Session-level transaction.
 
-    This corresponds to one or more :class:`~sqlalchemy.engine.Transaction`
-    instances behind the scenes, with one ``Transaction`` per ``Engine`` in
-    use.
+    This corresponds to one or more Core :class:`~.engine.base.Transaction`
+    instances behind the scenes, with one :class:`~.engine.base.Transaction`
+    per :class:`~.engine.base.Engine` in use.
 
-    Direct usage of ``SessionTransaction`` is not necessary as of SQLAlchemy
-    0.4; use the ``begin()`` and ``commit()`` methods on ``Session`` itself.
+    .. versionchanged:: 0.4
+        Direct usage of :class:`.SessionTransaction` is not typically
+        necessary; use the :meth:`.Session.rollback` and 
+        :meth:`.Session.commit` methods on :class:`.Session` itself to 
+        control the transaction.
 
-    The ``SessionTransaction`` object is **not** thread-safe.
+    The current instance of :class:`.SessionTransaction` for a given
+    :class:`.Session` is available via the :attr:`.Session.transaction`
+    attribute.
 
+    The :class:`.SessionTransaction` object is **not** thread-safe.
+
+    See also:
+    
+    :meth:`.Session.rollback`
+    
+    :meth:`.Session.commit`
+
+    :attr:`.Session.is_active`
+    
+    :meth:`.SessionEvents.after_commit`
+    
+    :meth:`.SessionEvents.after_rollback`
+    
+    :meth:`.SessionEvents.after_soft_rollback`
+    
     .. index::
       single: thread safety; SessionTransaction
 
@@ -321,9 +342,24 @@ class SessionTransaction(object):
                 else:
                     transaction._deactivate()
 
+        sess = self.session
+
+        if self.session._enable_transaction_accounting and \
+            not sess._is_clean():
+            # if items were added, deleted, or mutated
+            # here, we need to re-restore the snapshot
+            util.warn(
+                    "Session's state has been changed on "
+                    "a non-active transaction - this state "
+                    "will be discarded.")
+            self._restore_snapshot()
+
         self.close()
         if self._parent and _capture_exception:
             self._parent._rollback_exception = sys.exc_info()[1]
+
+        sess.dispatch.after_soft_rollback(sess, self)
+
         return self._parent
 
     def _rollback_impl(self):
@@ -501,7 +537,7 @@ class Session(object):
         self.__binds = {}
         self._flushing = False
         self.transaction = None
-        self.hash_key = id(self)
+        self.hash_key = _new_sessionid()
         self.autoflush = autoflush
         self.autocommit = autocommit
         self.expire_on_commit = expire_on_commit
@@ -528,6 +564,9 @@ class Session(object):
 
     connection_callable = None
 
+    transaction = None
+    """The current active or inactive :class:`.SessionTransaction`."""
+
     def begin(self, subtransactions=False, nested=False):
         """Begin a transaction on this Session.
 
@@ -547,7 +586,7 @@ class Session(object):
         if self.transaction is not None:
             if subtransactions or nested:
                 self.transaction = self.transaction._begin(
-                    nested=nested)
+                                        nested=nested)
             else:
                 raise sa_exc.InvalidRequestError(
                     "A transaction is already begun.  Use subtransactions=True "
@@ -851,7 +890,31 @@ class Session(object):
         For a multiply-bound or unbound :class:`.Session`, the 
         ``mapper`` or ``clause`` arguments are used to determine the 
         appropriate bind to return.
-
+        
+        Note that the "mapper" argument is usually present
+        when :meth:`.Session.get_bind` is called via an ORM
+        operation such as a :meth:`.Session.query`, each 
+        individual INSERT/UPDATE/DELETE operation within a 
+        :meth:`.Session.flush`, call, etc.
+        
+        The order of resolution is:
+        
+        1. if mapper given and session.binds is present,
+           locate a bind based on mapper.
+        2. if clause given and session.binds is present,
+           locate a bind based on :class:`.Table` objects
+           found in the given clause present in session.binds.
+        3. if session.bind is present, return that.
+        4. if clause given, attempt to return a bind 
+           linked to the :class:`.MetaData` ultimately
+           associated with the clause.
+        5. if mapper given, attempt to return a bind
+           linked to the :class:`.MetaData` ultimately 
+           associated with the :class:`.Table` or other
+           selectable to which the mapper is mapped.
+        6. No bind can be found, :class:`.UnboundExecutionError`
+           is raised.
+         
         :param mapper:
           Optional :func:`.mapper` mapped class or instance of
           :class:`.Mapper`.   The bind can be derived from a :class:`.Mapper`
@@ -915,6 +978,34 @@ class Session(object):
         """Return a new ``Query`` object corresponding to this ``Session``."""
 
         return self._query_cls(entities, self, **kwargs)
+
+    @property
+    @util.contextmanager
+    def no_autoflush(self):
+        """Return a context manager that disables autoflush.
+        
+        e.g.::
+        
+            with session.no_autoflush:
+                
+                some_object = SomeClass()
+                session.add(some_object)
+                # won't autoflush
+                some_object.related_thing = session.query(SomeRelated).first()
+        
+        Operations that proceed within the ``with:`` block
+        will not be subject to flushes occurring upon query
+        access.  This is useful when initializing a series
+        of objects which involve existing database queries,
+        where the uncompleted object should not yet be flushed.
+        
+        .. versionadded:: 0.7.6
+
+        """
+        autoflush = self.autoflush
+        self.autoflush = False
+        yield self
+        self.autoflush = autoflush
 
     def _autoflush(self):
         if self.autoflush and not self._flushing:
@@ -1421,7 +1512,9 @@ class Session(object):
                     "present in this session."
                     % (mapperutil.state_str(state), state.key))
 
-        if state.session_id and state.session_id is not self.hash_key:
+        if state.session_id and \
+                state.session_id is not self.hash_key and \
+                state.session_id in _sessions:
             raise sa_exc.InvalidRequestError(
                 "Object '%s' is already attached to session '%s' "
                 "(this is '%s')" % (mapperutil.state_str(state),
@@ -1459,7 +1552,7 @@ class Session(object):
         Writes out all pending object creations, deletions and modifications
         to the database as INSERTs, DELETEs, UPDATEs, etc.  Operations are
         automatically ordered by the Session's unit of work dependency
-        solver..
+        solver.
 
         Database operations will be issued in the current transactional
         context and do not affect the state of the transaction, unless an
@@ -1471,33 +1564,32 @@ class Session(object):
         will create a transaction on the fly that surrounds the entire set of
         operations int the flush.
 
-        objects
-          Optional; a list or tuple collection.  Restricts the flush operation
-          to only these objects, rather than all pending changes.
-          Deprecated - this flag prevents the session from properly maintaining
-          accounting among inter-object relations and can cause invalid results.
+        :param objects: Optional; restricts the flush operation to operate 
+          only on elements that are in the given collection.
+          
+          This feature is for an extremely narrow set of use cases where
+          particular objects may need to be operated upon before the 
+          full flush() occurs.  It is not intended for general use.
 
         """
-
-        if objects:
-            util.warn_deprecated(
-                "The 'objects' argument to session.flush() is deprecated; "
-                "Please do not add objects to the session which should not "
-                "yet be persisted.")
 
         if self._flushing:
             raise sa_exc.InvalidRequestError("Session is already flushing")
 
+        if self._is_clean():
+            return
         try:
             self._flushing = True
             self._flush(objects)
         finally:
             self._flushing = False
 
+    def _is_clean(self):
+        return not self.identity_map.check_modified() and \
+                not self._deleted and \
+                not self._new
+
     def _flush(self, objects=None):
-        if (not self.identity_map.check_modified() and
-            not self._deleted and not self._new):
-            return
 
         dirty = self._dirty_states
         if not dirty and not self._deleted and not self._new:
@@ -1583,29 +1675,42 @@ class Session(object):
 
     def is_modified(self, instance, include_collections=True, 
                             passive=attributes.PASSIVE_OFF):
-        """Return ``True`` if instance has modified attributes.
+        """Return ``True`` if the given instance has locally 
+        modified attributes.
 
-        This method retrieves a history instance for each instrumented
+        This method retrieves the history for each instrumented
         attribute on the instance and performs a comparison of the current
-        value to its previously committed value.
+        value to its previously committed value, if any.
+        
+        It is in effect a more expensive and accurate
+        version of checking for the given instance in the 
+        :attr:`.Session.dirty` collection; a full test for 
+        each attribute's net "dirty" status is performed.
+        
+        E.g.::
+        
+            return session.is_modified(someobject, passive=True)
 
-        ``include_collections`` indicates if multivalued collections should be
-        included in the operation.  Setting this to False is a way to detect
-        only local-column based properties (i.e. scalar columns or many-to-one
-        foreign keys) that would result in an UPDATE for this instance upon
-        flush.
-
-        The ``passive`` flag indicates if unloaded attributes and collections
-        should not be loaded in the course of performing this test.
-        Allowed values include :attr:`.PASSIVE_OFF`, :attr:`.PASSIVE_NO_INITIALIZE`.
+        .. versionchanged:: 0.8
+            In SQLAlchemy 0.7 and earlier, the ``passive`` 
+            flag should **always** be explicitly set to ``True``. 
+            The current default value of :data:`.attributes.PASSIVE_OFF`
+            for this flag is incorrect, in that it loads unloaded
+            collections and attributes which by definition 
+            have no modified state, and furthermore trips off 
+            autoflush which then causes all subsequent, possibly
+            modified attributes to lose their modified state.   
+            The default value of the flag will be changed in 0.8.
 
         A few caveats to this method apply:
 
-        * Instances present in the 'dirty' collection may result in a value 
-          of ``False`` when tested with this method.  This because while
-          the object may have received attribute set events, there may be
-          no net changes on its state.
-        * Scalar attributes may not have recorded the "previously" set
+        * Instances present in the :attr:`.Session.dirty` collection may report 
+          ``False`` when tested with this method.  This is because 
+          the object may have received change events via attribute
+          mutation, thus placing it in :attr:`.Session.dirty`, 
+          but ultimately the state is the same as that loaded from
+          the database, resulting in no net change here.
+        * Scalar attributes may not have recorded the previously set
           value when a new value was applied, if the attribute was not loaded,
           or was expired, at the time the new value was received - in these
           cases, the attribute is assumed to have a change, even if there is
@@ -1617,9 +1722,34 @@ class Session(object):
           expensive on average than issuing a defensive SELECT. 
 
           The "old" value is fetched unconditionally only if the attribute
-          container has the "active_history" flag set to ``True``. This flag
-          is set typically for primary key attributes and scalar references
-          that are not a simple many-to-one.
+          container has the ``active_history`` flag set to ``True``. This flag
+          is set typically for primary key attributes and scalar object references
+          that are not a simple many-to-one.  To set this flag for 
+          any arbitrary mapped column, use the ``active_history`` argument
+          with :func:`.column_property`.
+          
+        :param instance: mapped instance to be tested for pending changes.
+        :param include_collections: Indicates if multivalued collections should be
+         included in the operation.  Setting this to ``False`` is a way to detect
+         only local-column based properties (i.e. scalar columns or many-to-one
+         foreign keys) that would result in an UPDATE for this instance upon
+         flush.
+        :param passive: Indicates if unloaded attributes and 
+         collections should be loaded in the course of performing 
+         this test.  If set to ``False``, or left at its default
+         value of :data:`.PASSIVE_OFF`, unloaded attributes
+         will be loaded.  If set to ``True`` or 
+         :data:`.PASSIVE_NO_INITIALIZE`, unloaded 
+         collections and attributes will remain unloaded.  As 
+         noted previously, the existence of this flag here
+         is a bug, as unloaded attributes by definition have 
+         no changes, and the load operation also triggers an
+         autoflush which then cancels out subsequent changes.
+         This flag should **always be set to True**.
+
+         .. versionchanged:: 0.8
+             The flag will be deprecated and the default
+             set to ``True``.
 
         """
         try:
@@ -1627,10 +1757,12 @@ class Session(object):
         except exc.NO_STATE:
             raise exc.UnmappedInstanceError(instance)
         dict_ = state.dict
+
         if passive is True:
             passive = attributes.PASSIVE_NO_INITIALIZE
         elif passive is False:
             passive = attributes.PASSIVE_OFF
+
         for attr in state.manager.attributes:
             if \
                 (
@@ -1648,9 +1780,34 @@ class Session(object):
 
     @property
     def is_active(self):
-        """True if this Session has an active transaction."""
+        """True if this :class:`.Session` has an active transaction.
+        
+        This indicates if the :class:`.Session` is capable of emitting
+        SQL, as from the :meth:`.Session.execute`, :meth:`.Session.query`,
+        or :meth:`.Session.flush` methods.   If False, it indicates 
+        that the innermost transaction has been rolled back, but enclosing
+        :class:`.SessionTransaction` objects remain in the transactional
+        stack, which also must be rolled back.
+        
+        This flag is generally only useful with a :class:`.Session`
+        configured in its default mode of ``autocommit=False``.
+
+        """
 
         return self.transaction and self.transaction.is_active
+
+    identity_map = None
+    """A mapping of object identities to objects themselves.
+    
+    Iterating through ``Session.identity_map.values()`` provides
+    access to the full set of persistent objects (i.e., those 
+    that have row identity) currently in the session.
+    
+    See also:
+    
+    :func:`.identity_key` - operations involving identity keys.
+    
+    """
 
     @property
     def _dirty_states(self):
@@ -1665,6 +1822,10 @@ class Session(object):
     @property
     def dirty(self):
         """The set of all persistent instances considered dirty.
+        
+        E.g.::
+        
+            some_mapped_object in session.dirty
 
         Instances are considered dirty when they were modified but not
         deleted.
@@ -1679,7 +1840,7 @@ class Session(object):
         it's only done at flush time).
 
         To check if an instance has actionable net changes to its
-        attributes, use the is_modified() method.
+        attributes, use the :meth:`.Session.is_modified` method.
 
         """
         return util.IdentitySet(
@@ -1750,3 +1911,4 @@ def _state_session(state):
             pass
     return None
 
+_new_sessionid = util.counter()

@@ -1,5 +1,5 @@
 # orm/descriptor_props.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -13,7 +13,7 @@ as actively in the load/persist ORM loop.
 from sqlalchemy.orm.interfaces import \
     MapperProperty, PropComparator, StrategizedProperty
 from sqlalchemy.orm.mapper import _none_set
-from sqlalchemy.orm import attributes
+from sqlalchemy.orm import attributes, strategies
 from sqlalchemy import util, sql, exc as sa_exc, event, schema
 from sqlalchemy.sql import expression
 properties = util.importlater('sqlalchemy.orm', 'properties')
@@ -67,7 +67,6 @@ class DescriptorProperty(MapperProperty):
                         lambda: self._comparator_factory(mapper),
                         doc=self.doc
                     )
-        proxy_attr.property = self
         proxy_attr.impl = _ProxyImpl(self.key)
         mapper.class_manager.instrument_attribute(self.key, proxy_attr)
 
@@ -80,6 +79,8 @@ class CompositeProperty(DescriptorProperty):
         self.active_history = kwargs.get('active_history', False)
         self.deferred = kwargs.get('deferred', False)
         self.group = kwargs.get('group', None)
+        self.comparator_factory = kwargs.pop('comparator_factory',
+                                            self.__class__.Comparator)
         util.set_creation_order(self)
         self._create_descriptor()
 
@@ -103,6 +104,7 @@ class CompositeProperty(DescriptorProperty):
 
         def fget(instance):
             dict_ = attributes.instance_dict(instance)
+            state = attributes.instance_state(instance)
 
             if self.key not in dict_:
                 # key not present.  Iterate through related
@@ -110,11 +112,17 @@ class CompositeProperty(DescriptorProperty):
                 # ensures they all load.
                 values = [getattr(instance, key) for key in self._attribute_keys]
 
-                # usually, the load() event will have loaded our key
-                # at this point, unless we only loaded relationship()
-                # attributes above.  Populate here if that's the case.
-                if self.key not in dict_ and not _none_set.issuperset(values):
+                # current expected behavior here is that the composite is
+                # created on access if the object is persistent or if 
+                # col attributes have non-None.  This would be better 
+                # if the composite were created unconditionally,
+                # but that would be a behavioral change.
+                if self.key not in dict_ and (
+                    state.key is not None or 
+                    not _none_set.issuperset(values)
+                ):
                     dict_[self.key] = self.composite_class(*values)
+                    state.manager.dispatch.refresh(state, None, [self.key])
 
             return dict_.get(self.key, None)
 
@@ -196,6 +204,7 @@ class CompositeProperty(DescriptorProperty):
                 if k not in dict_:
                     return
 
+            #assert self.key not in dict_
             dict_[self.key] = self.composite_class(
                     *[state.dict[key] for key in 
                     self._attribute_keys]
@@ -206,10 +215,14 @@ class CompositeProperty(DescriptorProperty):
                 state.dict.pop(self.key, None)
 
         def insert_update_handler(mapper, connection, state):
-            state.dict[self.key] = self.composite_class(
-                    *[state.dict.get(key, None) for key in 
-                    self._attribute_keys]
-                )
+            """After an insert or update, some columns may be expired due
+            to server side defaults, or re-populated due to client side
+            defaults.  Pop out the composite value here so that it 
+            recreates.
+            
+            """
+
+            state.dict.pop(self.key, None)
 
         event.listen(self.parent, 'after_insert', 
                                     insert_update_handler, raw=True)
@@ -240,7 +253,11 @@ class CompositeProperty(DescriptorProperty):
             if hist.has_changes():
                 has_history = True
 
-            added.extend(hist.non_deleted())
+            non_deleted = hist.non_deleted()
+            if non_deleted:
+                added.extend(non_deleted)
+            else:
+                added.append(None)
             if hist.deleted:
                 deleted.extend(hist.deleted)
             else:
@@ -258,11 +275,11 @@ class CompositeProperty(DescriptorProperty):
             )
 
     def _comparator_factory(self, mapper):
-        return CompositeProperty.Comparator(self)
+        return self.comparator_factory(self)
 
     class Comparator(PropComparator):
         def __init__(self, prop, adapter=None):
-            self.prop = prop
+            self.prop = self.property = prop
             self.adapter = adapter
 
         def __clause_element__(self):

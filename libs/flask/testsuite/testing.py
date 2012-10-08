@@ -46,6 +46,38 @@ class TestToolsTestCase(FlaskTestCase):
             rv = c.get('/')
             self.assert_equal(rv.data, 'http://localhost/')
 
+    def test_redirect_keep_session(self):
+        app = flask.Flask(__name__)
+        app.secret_key = 'testing'
+
+        @app.route('/', methods=['GET', 'POST'])
+        def index():
+            if flask.request.method == 'POST':
+                return flask.redirect('/getsession')
+            flask.session['data'] = 'foo'
+            return 'index'
+
+        @app.route('/getsession')
+        def get_session():
+            return flask.session.get('data', '<missing>')
+
+        with app.test_client() as c:
+            rv = c.get('/getsession')
+            assert rv.data == '<missing>'
+
+            rv = c.get('/')
+            assert rv.data == 'index'
+            assert flask.session.get('data') == 'foo'
+            rv = c.post('/', data={}, follow_redirects=True)
+            assert rv.data == 'foo'
+
+            # This support requires a new Werkzeug version
+            if not hasattr(c, 'redirect_client'):
+                assert flask.session.get('data') == 'foo'
+
+            rv = c.get('/getsession')
+            assert rv.data == 'foo'
+
     def test_session_transactions(self):
         app = flask.Flask(__name__)
         app.testing = True
@@ -87,6 +119,7 @@ class TestToolsTestCase(FlaskTestCase):
         with app.test_client() as c:
             rv = c.get('/')
             req = flask.request._get_current_object()
+            self.assert_(req is not None)
             with c.session_transaction():
                 self.assert_(req is flask.request._get_current_object())
 

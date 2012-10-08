@@ -1,5 +1,5 @@
 # mysql/base.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -83,6 +83,23 @@ Therefore it is strongly advised that table names be declared as
 all lower case both within SQLAlchemy as well as on the MySQL
 database itself, especially if database reflection features are
 to be used.
+
+Transaction Isolation Level
+---------------------------
+
+:func:`.create_engine` accepts an ``isolation_level`` 
+parameter which results in the command ``SET SESSION 
+TRANSACTION ISOLATION LEVEL <level>`` being invoked for 
+every new connection. Valid values for this parameter are
+``READ COMMITTED``, ``READ UNCOMMITTED``, 
+``REPEATABLE READ``, and ``SERIALIZABLE``::
+
+    engine = create_engine(
+                    "mysql://scott:tiger@localhost/test", 
+                    isolation_level="READ UNCOMMITTED"
+                )
+
+.. versionadded:: 0.7.6
 
 Keys
 ----
@@ -168,6 +185,100 @@ available.
 
     update(..., mysql_limit=10)
 
+rowcount Support
+----------------
+
+SQLAlchemy standardizes the DBAPI ``cursor.rowcount`` attribute to be the
+usual definition of "number of rows matched by an UPDATE or DELETE" statement.
+This is in contradiction to the default setting on most MySQL DBAPI drivers,
+which is "number of rows actually modified/deleted".  For this reason, the
+SQLAlchemy MySQL dialects always set the ``constants.CLIENT.FOUND_ROWS`` flag,
+or whatever is equivalent for the DBAPI in use, on connect, unless the flag value 
+is overridden using DBAPI-specific options
+(such as ``client_flag`` for the MySQL-Python driver, ``found_rows`` for the
+OurSQL driver).
+
+See also:
+
+:attr:`.ResultProxy.rowcount`
+
+
+CAST Support
+------------
+
+MySQL documents the CAST operator as available in version 4.0.2.  When using the
+SQLAlchemy :func:`.cast` function, SQLAlchemy
+will not render the CAST token on MySQL before this version, based on server version
+detection, instead rendering the internal expression directly.
+
+CAST may still not be desirable on an early MySQL version post-4.0.2, as it didn't
+add all datatype support until 4.1.1.   If your application falls into this
+narrow area, the behavior of CAST can be controlled using the :ref:`sqlalchemy.ext.compiler_toplevel`
+system, as per the recipe below::
+
+    from sqlalchemy.sql.expression import _Cast
+    from sqlalchemy.ext.compiler import compiles
+
+    @compiles(_Cast, 'mysql')
+    def _check_mysql_version(element, compiler, **kw):
+        if compiler.dialect.server_version_info < (4, 1, 0):
+            return compiler.process(element.clause, **kw)
+        else:
+            return compiler.visit_cast(element, **kw)
+
+The above function, which only needs to be declared once
+within an application, overrides the compilation of the
+:func:`.cast` construct to check for version 4.1.0 before
+fully rendering CAST; else the internal element of the
+construct is rendered directly.
+
+
+.. _mysql_indexes:
+
+MySQL Specific Index Options
+----------------------------
+
+MySQL-specific extensions to the :class:`.Index` construct are available.
+
+Index Length
+~~~~~~~~~~~~~
+
+MySQL provides an option to create index entries with a certain length, where
+"length" refers to the number of characters or bytes in each value which will
+become part of the index. SQLAlchemy provides this feature via the
+``mysql_length`` parameter::
+
+    Index('my_index', my_table.c.data, mysql_length=10)
+
+Prefix lengths are given in characters for nonbinary string types and in bytes
+for binary string types. The value passed to the keyword argument will be
+simply passed through to the underlying CREATE INDEX command, so it *must* be
+an integer. MySQL only allows a length for an index if it is for a CHAR,
+VARCHAR, TEXT, BINARY, VARBINARY and BLOB.
+
+Index Types
+~~~~~~~~~~~~~
+
+Some MySQL storage engines permit you to specify an index type when creating
+an index or primary key constraint. SQLAlchemy provides this feature via the 
+``mysql_using`` parameter on :class:`.Index`::
+
+    Index('my_index', my_table.c.data, mysql_using='hash')
+
+As well as the ``mysql_using`` parameter on :class:`.PrimaryKeyConstraint`::
+
+    PrimaryKeyConstraint("data", mysql_using='hash')
+
+The value passed to the keyword argument will be simply passed through to the
+underlying CREATE INDEX or PRIMARY KEY clause, so it *must* be a valid index 
+type for your MySQL storage engine.
+
+More information can be found at:
+
+http://dev.mysql.com/doc/refman/5.0/en/create-index.html
+
+http://dev.mysql.com/doc/refman/5.0/en/create-table.html
+
 """
 
 import datetime, inspect, re, sys
@@ -182,7 +293,7 @@ from array import array as _array
 from sqlalchemy.engine import reflection
 from sqlalchemy.engine import base as engine_base, default
 from sqlalchemy import types as sqltypes
-
+from sqlalchemy.util import topological
 from sqlalchemy.types import DATE, DATETIME, BOOLEAN, TIME, \
                                 BLOB, BINARY, VARBINARY
 
@@ -251,9 +362,9 @@ class _FloatType(_NumericType, sqltypes.Float):
                 (precision is None and scale is not None) or
                 (precision is not None and scale is None)
             ):
-           raise exc.ArgumentError(
-               "You must specify both precision and scale or omit "
-               "both altogether.")
+            raise exc.ArgumentError(
+                "You must specify both precision and scale or omit "
+                "both altogether.")
 
         super(_FloatType, self).__init__(precision=precision, asdecimal=asdecimal, **kw)
         self.scale = scale
@@ -1125,6 +1236,9 @@ class MySQLExecutionContext(default.DefaultExecutionContext):
 
 class MySQLCompiler(compiler.SQLCompiler):
 
+    render_table_with_column_in_update_from = True
+    """Overridden from base SQLCompiler value"""
+
     extract_map = compiler.SQLCompiler.extract_map.copy()
     extract_map.update ({
         'milliseconds': 'millisecond',
@@ -1177,11 +1291,11 @@ class MySQLCompiler(compiler.SQLCompiler):
     def visit_cast(self, cast, **kwargs):
         # No cast until 4, no decimals until 5.
         if not self.dialect._supports_cast:
-            return self.process(cast.clause)
+            return self.process(cast.clause.self_group())
 
         type_ = self.process(cast.typeclause)
         if type_ is None:
-            return self.process(cast.clause)
+            return self.process(cast.clause.self_group())
 
         return 'CAST(%s AS %s)' % (self.process(cast.clause), type_)
 
@@ -1194,7 +1308,9 @@ class MySQLCompiler(compiler.SQLCompiler):
     def get_select_precolumns(self, select):
         """Add special MySQL keywords in place of DISTINCT.
         
-        .. note:: this usage is deprecated.  :meth:`.Select.prefix_with`
+        .. note:: 
+        
+          this usage is deprecated.  :meth:`.Select.prefix_with`
           should be used for special keywords at the start
           of a SELECT.
           
@@ -1260,25 +1376,21 @@ class MySQLCompiler(compiler.SQLCompiler):
             # No offset provided, so just use the limit
             return ' \n LIMIT %s' % (self.process(sql.literal(limit)),)
 
-    def visit_update(self, update_stmt):
-        self.stack.append({'from': set([update_stmt.table])})
-
-        self.isupdate = True
-        colparams = self._get_colparams(update_stmt)
-
-        text = "UPDATE " + self.preparer.format_table(update_stmt.table) + \
-                " SET " + ', '.join(["%s=%s" % (self.preparer.format_column(c[0]), c[1]) for c in colparams])
-
-        if update_stmt._whereclause is not None:
-            text += " WHERE " + self.process(update_stmt._whereclause)
-
+    def update_limit_clause(self, update_stmt):
         limit = update_stmt.kwargs.get('%s_limit' % self.dialect.name, None)
         if limit:
-            text += " LIMIT %s" % limit
+            return "LIMIT %s" % limit
+        else:
+            return None
 
-        self.stack.pop(-1)
+    def update_tables_clause(self, update_stmt, from_table, extra_froms, **kw):
+        return ', '.join(t._compiler_dispatch(self, asfrom=True, **kw) 
+                    for t in [from_table] + list(extra_froms))
 
-        return text
+    def update_from_clause(self, update_stmt, from_table, 
+                                extra_froms, from_hints, **kw):
+        return None
+
 
 # ug.  "InnoDB needs indexes on foreign keys and referenced keys [...].
 #       Starting with MySQL 4.1.2, these indexes are created automatically.
@@ -1301,8 +1413,12 @@ class MySQLDDLCompiler(compiler.DDLCompiler):
                 auto_inc_column is not list(table.primary_key)[0]:
             if constraint_string:
                 constraint_string += ", \n\t"
-            constraint_string += "KEY `idx_autoinc_%s`(`%s`)" % (auto_inc_column.name, \
-                            self.preparer.format_column(auto_inc_column))
+            constraint_string += "KEY %s (%s)" % (
+                        self.preparer.quote(
+                            "idx_autoinc_%s" % auto_inc_column.name, None
+                        ), 
+                        self.preparer.format_column(auto_inc_column)
+                    )
 
         return constraint_string
 
@@ -1334,33 +1450,82 @@ class MySQLDDLCompiler(compiler.DDLCompiler):
         """Build table-level CREATE options like ENGINE and COLLATE."""
 
         table_opts = []
-        for k in table.kwargs:
-            if k.startswith('%s_' % self.dialect.name):
-                opt = k[len(self.dialect.name)+1:].upper()
 
-                arg = table.kwargs[k]
-                if opt in _options_of_type_string:
-                    arg = "'%s'" % arg.replace("\\", "\\\\").replace("'", "''")
+        opts = dict(
+            (
+                k[len(self.dialect.name)+1:].upper(), 
+                v
+            )
+            for k, v in table.kwargs.items()
+            if k.startswith('%s_' % self.dialect.name)
+        )
 
-                if opt in ('DATA_DIRECTORY', 'INDEX_DIRECTORY',
-                           'DEFAULT_CHARACTER_SET', 'CHARACTER_SET', 
-                           'DEFAULT_CHARSET',
-                           'DEFAULT_COLLATE'):
-                    opt = opt.replace('_', ' ')
+        for opt in topological.sort([
+            ('DEFAULT_CHARSET', 'COLLATE'),
+            ('DEFAULT_CHARACTER_SET', 'COLLATE')
+        ], opts):
+            arg = opts[opt]
+            if opt in _options_of_type_string:
+                arg = "'%s'" % arg.replace("\\", "\\\\").replace("'", "''")
 
-                joiner = '='
-                if opt in ('TABLESPACE', 'DEFAULT CHARACTER SET',
-                           'CHARACTER SET', 'COLLATE'):
-                    joiner = ' '
+            if opt in ('DATA_DIRECTORY', 'INDEX_DIRECTORY',
+                       'DEFAULT_CHARACTER_SET', 'CHARACTER_SET', 
+                       'DEFAULT_CHARSET',
+                       'DEFAULT_COLLATE'):
+                opt = opt.replace('_', ' ')
 
-                table_opts.append(joiner.join((opt, arg)))
+            joiner = '='
+            if opt in ('TABLESPACE', 'DEFAULT CHARACTER SET',
+                       'CHARACTER SET', 'COLLATE'):
+                joiner = ' '
+
+            table_opts.append(joiner.join((opt, arg)))
         return ' '.join(table_opts)
+
+
+    def visit_create_index(self, create):
+        index = create.element
+        preparer = self.preparer
+        table = preparer.format_table(index.table)
+        columns = [preparer.quote(c.name, c.quote) for c in index.columns]
+        name = preparer.quote(
+                    self._index_identifier(index.name), 
+                    index.quote)
+
+        text = "CREATE "
+        if index.unique:
+            text += "UNIQUE "
+        text += "INDEX %s ON %s " % (name, table)
+
+        columns = ', '.join(columns)
+        if 'mysql_length' in index.kwargs:
+            length = index.kwargs['mysql_length']
+            text += "(%s(%d))" % (columns, length)
+        else:
+            text += "(%s)" % (columns)
+
+        if 'mysql_using' in index.kwargs:
+            using = index.kwargs['mysql_using']
+            text += " USING %s" % (preparer.quote(using, index.quote))
+
+        return text
+
+    def visit_primary_key_constraint(self, constraint):
+        text = super(MySQLDDLCompiler, self).\
+            visit_primary_key_constraint(constraint)
+        if "mysql_using" in constraint.kwargs:
+            using = constraint.kwargs['mysql_using']
+            text += " USING %s" % (
+                self.preparer.quote(using, constraint.quote))
+        return text
 
     def visit_drop_index(self, drop):
         index = drop.element
 
         return "\nDROP INDEX %s ON %s" % \
-                    (self.preparer.quote(self._index_identifier(index.name), index.quote),
+                    (self.preparer.quote(
+                        self._index_identifier(index.name), index.quote
+                    ),
                      self.preparer.format_table(index.table))
 
     def visit_drop_constraint(self, drop):
@@ -1562,7 +1727,7 @@ class MySQLTypeCompiler(compiler.GenericTypeCompiler):
         if type_.length:
             return self._extend_string(type_, {}, "VARCHAR(%d)" % type_.length)
         else:
-            raise exc.InvalidRequestError(
+            raise exc.CompileError(
                     "VARCHAR requires a length on dialect %s" % 
                     self.dialect.name)
 
@@ -1578,7 +1743,7 @@ class MySQLTypeCompiler(compiler.GenericTypeCompiler):
         if type_.length:
             return self._extend_string(type_, {'national':True}, "VARCHAR(%(length)s)" % {'length': type_.length})
         else:
-            raise exc.InvalidRequestError(
+            raise exc.CompileError(
                     "NVARCHAR requires a length on dialect %s" % 
                     self.dialect.name)
 
@@ -1679,8 +1844,40 @@ class MySQLDialect(default.DefaultDialect):
     _backslash_escapes = True
     _server_ansiquotes = False
 
-    def __init__(self, use_ansiquotes=None, **kwargs):
+    def __init__(self, use_ansiquotes=None, isolation_level=None, **kwargs):
         default.DefaultDialect.__init__(self, **kwargs)
+        self.isolation_level = isolation_level
+
+    def on_connect(self):
+        if self.isolation_level is not None:
+            def connect(conn):
+                self.set_isolation_level(conn, self.isolation_level)
+            return connect
+        else:
+            return None
+
+    _isolation_lookup = set(['SERIALIZABLE', 
+                'READ UNCOMMITTED', 'READ COMMITTED', 'REPEATABLE READ'])
+
+    def set_isolation_level(self, connection, level):
+        level = level.replace('_', ' ')
+        if level not in self._isolation_lookup:
+            raise exc.ArgumentError(
+                "Invalid value '%s' for isolation_level. "
+                "Valid isolation levels for %s are %s" % 
+                (level, self.name, ", ".join(self._isolation_lookup))
+                )
+        cursor = connection.cursor()
+        cursor.execute("SET SESSION TRANSACTION ISOLATION LEVEL %s" % level)
+        cursor.execute("COMMIT")
+        cursor.close()
+
+    def get_isolation_level(self, connection):
+        cursor = connection.cursor()
+        cursor.execute('SELECT @@tx_isolation')
+        val = cursor.fetchone()[0]
+        cursor.close()
+        return val.upper().replace("-", " ")
 
     def do_commit(self, connection):
         """Execute a COMMIT."""
@@ -1842,7 +2039,6 @@ class MySQLDialect(default.DefaultDialect):
 
     @reflection.cache
     def get_view_names(self, connection, schema=None, **kw):
-        charset = self._connection_charset
         if self.server_version_info < (5, 0, 2):
             raise NotImplementedError
         if schema is None:
@@ -1853,7 +2049,7 @@ class MySQLDialect(default.DefaultDialect):
         rp = connection.execute("SHOW FULL TABLES FROM %s" %
                 self.identifier_preparer.quote_identifier(schema))
         return [row[0] for row in self._compat_fetchall(rp, charset=charset)\
-                                                    if row[1] == 'VIEW']
+                                                    if row[1] in ('VIEW', 'SYSTEM VIEW')]
 
     @reflection.cache
     def get_table_options(self, connection, table_name, schema=None, **kw):
@@ -2470,9 +2666,7 @@ class MySQLTableDefinitionParser(object):
         # PARTITION
         #
         # punt!
-        self._re_partition = _re_compile(
-            r'  '
-            r'(?:SUB)?PARTITION')
+        self._re_partition = _re_compile(r'(?:.*)(?:SUB)?PARTITION(?:.*)')
 
         # Table-level options (COLLATE, ENGINE, etc.)
         # Do the string options first, since they have quoted strings we need to get rid of.

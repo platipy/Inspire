@@ -1,5 +1,5 @@
 # orm/util.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -11,6 +11,7 @@ from sqlalchemy.orm.interfaces import MapperExtension, EXT_CONTINUE,\
                                 PropComparator, MapperProperty
 from sqlalchemy.orm import attributes, exc
 import operator
+import re
 
 mapperlib = util.importlater("sqlalchemy.orm", "mapperlib")
 
@@ -20,57 +21,83 @@ all_cascades = frozenset(("delete", "delete-orphan", "all", "merge",
 
 _INSTRUMENTOR = ('mapper', 'instrumentor')
 
-class CascadeOptions(dict):
+class CascadeOptions(frozenset):
     """Keeps track of the options sent to relationship().cascade"""
 
-    def __init__(self, arg=""):
-        if not arg:
-            values = set()
-        else:
-            values = set(c.strip() for c in arg.split(','))
+    _add_w_all_cascades = all_cascades.difference([
+                            'all', 'none', 'delete-orphan'])
+    _allowed_cascades = all_cascades
 
-        for name in ['save-update', 'delete', 'refresh-expire', 
-                            'merge', 'expunge']:
-            boolean = name in values or 'all' in values
-            setattr(self, name.replace('-', '_'), boolean)
-            if boolean:
-                self[name] = True
+    def __new__(cls, arg):
+        values = set([
+                    c for c 
+                    in re.split('\s*,\s*', arg or "")
+                    if c
+                ])
+
+        if values.difference(cls._allowed_cascades):
+            raise sa_exc.ArgumentError(
+                    "Invalid cascade option(s): %s" % 
+                    ", ".join([repr(x) for x in 
+                        sorted(
+                            values.difference(cls._allowed_cascades)
+                    )])
+            )
+
+        if "all" in values:
+            values.update(cls._add_w_all_cascades)
+        if "none" in values:
+            values.clear()
+        values.discard('all')
+
+        self = frozenset.__new__(CascadeOptions, values)
+        self.save_update = 'save-update' in values
+        self.delete = 'delete' in values
+        self.refresh_expire = 'refresh-expire' in values
+        self.merge = 'merge' in values
+        self.expunge = 'expunge' in values
         self.delete_orphan = "delete-orphan" in values
-        if self.delete_orphan:
-            self['delete-orphan'] = True
 
         if self.delete_orphan and not self.delete:
-            util.warn("The 'delete-orphan' cascade option requires "
-                        "'delete'.  This will raise an error in 0.6.")
-
-        for x in values:
-            if x not in all_cascades:
-                raise sa_exc.ArgumentError("Invalid cascade option '%s'" % x)
+            util.warn("The 'delete-orphan' cascade "
+                        "option requires 'delete'.")
+        return self
 
     def __repr__(self):
-        return "CascadeOptions(%s)" % repr(",".join(
-            [x for x in ['delete', 'save_update', 'merge', 'expunge',
-                         'delete_orphan', 'refresh-expire']
-             if getattr(self, x, False) is True]))
+        return "CascadeOptions(%r)" % (
+            ",".join([x for x in sorted(self)])
+        )
 
-def _validator_events(desc, key, validator):
+def _validator_events(desc, key, validator, include_removes):
     """Runs a validation method on an attribute value to be set or appended."""
 
-    def append(state, value, initiator):
-        return validator(state.obj(), key, value)
+    if include_removes:
+        def append(state, value, initiator):
+            return validator(state.obj(), key, value, False)
 
-    def set_(state, value, oldvalue, initiator):
-        return validator(state.obj(), key, value)
+        def set_(state, value, oldvalue, initiator):
+            return validator(state.obj(), key, value, False)
+
+        def remove(state, value, initiator):
+            validator(state.obj(), key, value, True)
+    else:
+        def append(state, value, initiator):
+            return validator(state.obj(), key, value)
+
+        def set_(state, value, oldvalue, initiator):
+            return validator(state.obj(), key, value)
 
     event.listen(desc, 'append', append, raw=True, retval=True)
     event.listen(desc, 'set', set_, raw=True, retval=True)
+    if include_removes:
+        event.listen(desc, "remove", remove, raw=True, retval=True)
 
 def polymorphic_union(table_map, typecolname, aliasname='p_union', cast_nulls=True):
     """Create a ``UNION`` statement used by a polymorphic mapper.
 
     See  :ref:`concrete_inheritance` for an example of how
     this is used.
-    
+
     :param table_map: mapping of polymorphic identities to 
      :class:`.Table` objects.
     :param typecolname: string name of a "discriminator" column, which will be 
@@ -172,7 +199,7 @@ def identity_key(*args, **kwargs):
                 % ", ".join(kwargs.keys()))
         mapper = class_mapper(class_)
         if "ident" in locals():
-            return mapper.identity_key_from_primary_key(ident)
+            return mapper.identity_key_from_primary_key(util.to_list(ident))
         return mapper.identity_key_from_row(row)
     instance = kwargs.pop("instance")
     if kwargs:
@@ -222,14 +249,60 @@ class AliasedClass(object):
                         join((user_alias, User.id > user_alias.id)).\\
                         filter(User.name==user_alias.name)
 
+    The resulting object is an instance of :class:`.AliasedClass`, however
+    it implements a ``__getattribute__()`` scheme which will proxy attribute
+    access to that of the ORM class being aliased.  All classmethods
+    on the mapped entity should also be available here, including 
+    hybrids created with the :ref:`hybrids_toplevel` extension,
+    which will receive the :class:`.AliasedClass` as the "class" argument
+    when classmethods are called.
+
+    :param cls: ORM mapped entity which will be "wrapped" around an alias.
+    :param alias: a selectable, such as an :func:`.alias` or :func:`.select`
+     construct, which will be rendered in place of the mapped table of the
+     ORM entity.  If left as ``None``, an ordinary :class:`.Alias` of the 
+     ORM entity's mapped table will be generated.
+    :param name: A name which will be applied both to the :class:`.Alias`
+     if one is generated, as well as the name present in the "named tuple"
+     returned by the :class:`.Query` object when results are returned.
+    :param adapt_on_names: if True, more liberal "matching" will be used when
+     mapping the mapped columns of the ORM entity to those of the given selectable - 
+     a name-based match will be performed if the given selectable doesn't 
+     otherwise have a column that corresponds to one on the entity.  The 
+     use case for this is when associating an entity with some derived
+     selectable such as one that uses aggregate functions::
+
+        class UnitPrice(Base):
+            __tablename__ = 'unit_price'
+            ...
+            unit_id = Column(Integer)
+            price = Column(Numeric)
+
+        aggregated_unit_price = Session.query(
+                                    func.sum(UnitPrice.price).label('price')
+                                ).group_by(UnitPrice.unit_id).subquery()
+
+        aggregated_unit_price = aliased(UnitPrice, alias=aggregated_unit_price, adapt_on_names=True)
+
+     Above, functions on ``aggregated_unit_price`` which
+     refer to ``.price`` will return the
+     ``fund.sum(UnitPrice.price).label('price')`` column,
+     as it is matched on the name "price".  Ordinarily, the "price" function wouldn't
+     have any "column correspondence" to the actual ``UnitPrice.price`` column
+     as it is not a proxy of the original.
+
+     .. versionadded:: 0.7.3
+
     """
-    def __init__(self, cls, alias=None, name=None):
+    def __init__(self, cls, alias=None, name=None, adapt_on_names=False):
         self.__mapper = _class_to_mapper(cls)
         self.__target = self.__mapper.class_
+        self.__adapt_on_names = adapt_on_names
         if alias is None:
             alias = self.__mapper._with_polymorphic_selectable.alias(name=name)
         self.__adapter = sql_util.ClauseAdapter(alias,
-                                equivalents=self.__mapper._equivalent_columns)
+                                equivalents=self.__mapper._equivalent_columns,
+                                adapt_on_names=self.__adapt_on_names)
         self.__alias = alias
         # used to assign a name to the RowTuple object
         # returned by Query.
@@ -240,15 +313,18 @@ class AliasedClass(object):
         return {
             'mapper':self.__mapper, 
             'alias':self.__alias, 
-            'name':self._sa_label_name
+            'name':self._sa_label_name,
+            'adapt_on_names':self.__adapt_on_names,
         }
 
     def __setstate__(self, state):
         self.__mapper = state['mapper']
         self.__target = self.__mapper.class_
+        self.__adapt_on_names = state['adapt_on_names']
         alias = state['alias']
         self.__adapter = sql_util.ClauseAdapter(alias,
-                                equivalents=self.__mapper._equivalent_columns)
+                                equivalents=self.__mapper._equivalent_columns,
+                                adapt_on_names=self.__adapt_on_names)
         self.__alias = alias
         name = state['name']
         self._sa_label_name = name
@@ -300,11 +376,13 @@ class AliasedClass(object):
         return '<AliasedClass at 0x%x; %s>' % (
             id(self), self.__target.__name__)
 
-def aliased(element, alias=None, name=None):
+def aliased(element, alias=None, name=None, adapt_on_names=False):
     if isinstance(element, expression.FromClause):
+        if adapt_on_names:
+            raise sa_exc.ArgumentError("adapt_on_names only applies to ORM elements")
         return element.alias(name)
     else:
-        return AliasedClass(element, alias=alias, name=name)
+        return AliasedClass(element, alias=alias, name=name, adapt_on_names=adapt_on_names)
 
 def _orm_annotate(element, exclude=None):
     """Deep copy the given ClauseElement, annotating each element with the
@@ -382,16 +460,41 @@ class _ORMJoin(expression.Join):
 def join(left, right, onclause=None, isouter=False, join_to_left=True):
     """Produce an inner join between left and right clauses.
 
-    In addition to the interface provided by
-    :func:`~sqlalchemy.sql.expression.join()`, left and right may be mapped
-    classes or AliasedClass instances. The onclause may be a
-    string name of a relationship(), or a class-bound descriptor
-    representing a relationship.
+    :func:`.orm.join` is an extension to the core join interface
+    provided by :func:`.sql.expression.join()`, where the
+    left and right selectables may be not only core selectable
+    objects such as :class:`.Table`, but also mapped classes or
+    :class:`.AliasedClass` instances.   The "on" clause can
+    be a SQL expression, or an attribute or string name
+    referencing a configured :func:`.relationship`.
 
-    join_to_left indicates to attempt aliasing the ON clause,
+    ``join_to_left`` indicates to attempt aliasing the ON clause,
     in whatever form it is passed, to the selectable
     passed as the left side.  If False, the onclause
     is used as is.
+
+    :func:`.orm.join` is not commonly needed in modern usage,
+    as its functionality is encapsulated within that of the
+    :meth:`.Query.join` method, which features a
+    significant amount of automation beyond :func:`.orm.join`
+    by itself.  Explicit usage of :func:`.orm.join` 
+    with :class:`.Query` involves usage of the 
+    :meth:`.Query.select_from` method, as in::
+
+        from sqlalchemy.orm import join
+        session.query(User).\\
+            select_from(join(User, Address, User.addresses)).\\
+            filter(Address.email_address=='foo@bar.com')
+
+    In modern SQLAlchemy the above join can be written more 
+    succinctly as::
+
+        session.query(User).\\
+                join(User.addresses).\\
+                filter(Address.email_address=='foo@bar.com')
+
+    See :meth:`.Query.join` for information on modern usage
+    of ORM level joins.
 
     """
     return _ORMJoin(left, right, onclause, isouter, join_to_left)
@@ -399,11 +502,9 @@ def join(left, right, onclause=None, isouter=False, join_to_left=True):
 def outerjoin(left, right, onclause=None, join_to_left=True):
     """Produce a left outer join between left and right clauses.
 
-    In addition to the interface provided by
-    :func:`~sqlalchemy.sql.expression.outerjoin()`, left and right may be
-    mapped classes or AliasedClass instances. The onclause may be a string
-    name of a relationship(), or a class-bound descriptor representing a
-    relationship.
+    This is the "outer join" version of the :func:`.orm.join` function,
+    featuring the same behavior except that an OUTER JOIN is generated.
+    See that function's documentation for other usage details.
 
     """
     return _ORMJoin(left, right, onclause, True, join_to_left)
@@ -419,11 +520,12 @@ def with_parent(instance, prop):
     Python without the need to render joins to the parent table
     in the rendered statement.
 
-    As of 0.6.4, this method accepts parent instances in all 
-    persistence states, including transient, persistent, and detached.
-    Only the requisite primary key/foreign key attributes need to
-    be populated.  Previous versions didn't work with transient
-    instances.
+    .. versionchanged:: 0.6.4
+        This method accepts parent instances in all 
+        persistence states, including transient, persistent, and detached.
+        Only the requisite primary key/foreign key attributes need to
+        be populated.  Previous versions didn't work with transient
+        instances.
 
     :param instance:
       An instance which has some :func:`.relationship`.
@@ -436,7 +538,7 @@ def with_parent(instance, prop):
     """
     if isinstance(prop, basestring):
         mapper = object_mapper(instance)
-        prop = mapper.get_property(prop)
+        prop = getattr(mapper.class_, prop).property
     elif isinstance(prop, attributes.QueryableAttribute):
         prop = prop.property
 
@@ -483,15 +585,20 @@ def _entity_descriptor(entity, key):
     attribute.
 
     """
-    if not isinstance(entity, (AliasedClass, type)):
-        entity = entity.class_
+    if isinstance(entity, expression.FromClause):
+        description = entity
+        entity = entity.c
+    elif not isinstance(entity, (AliasedClass, type)):
+        description = entity = entity.class_
+    else:
+        description = entity
 
     try:
         return getattr(entity, key)
     except AttributeError:
         raise sa_exc.InvalidRequestError(
                     "Entity '%s' has no property '%s'" % 
-                    (entity, key)
+                    (description, key)
                 )
 
 def _orm_columns(entity):
@@ -532,9 +639,12 @@ def object_mapper(instance):
         raise exc.UnmappedInstanceError(instance)
 
 def class_mapper(class_, compile=True):
-    """Given a class, return the primary Mapper associated with the key.
+    """Given a class, return the primary :class:`.Mapper` associated 
+    with the key.
 
-    Raises UnmappedClassError if no mapping is configured.
+    Raises :class:`.UnmappedClassError` if no mapping is configured
+    on the given class, or :class:`.ArgumentError` if a non-class
+    object is passed.
 
     """
 
@@ -543,6 +653,8 @@ def class_mapper(class_, compile=True):
         mapper = class_manager.mapper
 
     except exc.NO_STATE:
+        if not isinstance(class_, type): 
+            raise sa_exc.ArgumentError("Class object expected, got '%r'." % class_) 
         raise exc.UnmappedClassError(class_)
 
     if compile and mapperlib.module._new_mappers:
@@ -573,6 +685,9 @@ def has_identity(object):
     return state.has_identity
 
 def _is_mapped_class(cls):
+    """Return True if the given object is a mapped class, 
+    :class:`.Mapper`, or :class:`.AliasedClass`."""
+
     if isinstance(cls, (AliasedClass, mapperlib.Mapper)):
         return True
     if isinstance(cls, expression.ClauseElement):
@@ -581,6 +696,16 @@ def _is_mapped_class(cls):
         manager = attributes.manager_of_class(cls)
         return manager and _INSTRUMENTOR in manager.info
     return False
+
+def _mapper_or_none(cls):
+    """Return the :class:`.Mapper` for the given class or None if the 
+    class is not mapped."""
+
+    manager = attributes.manager_of_class(cls)
+    if manager is not None and _INSTRUMENTOR in manager.info:
+        return manager.info[_INSTRUMENTOR]
+    else:
+        return None
 
 def instance_str(instance):
     """Return a string describing an instance."""

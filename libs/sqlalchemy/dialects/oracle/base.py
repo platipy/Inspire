@@ -1,5 +1,5 @@
 # oracle/base.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -63,10 +63,12 @@ used on the SQLAlchemy side.
 Unicode
 -------
 
-SQLAlchemy 0.6 uses the "native unicode" mode provided as of cx_oracle 5.  cx_oracle 5.0.2
-or greater is recommended for support of NCLOB.   If not using cx_oracle 5, the NLS_LANG
-environment variable needs to be set in order for the oracle client library to use 
-proper encoding, such as "AMERICAN_AMERICA.UTF8".
+.. versionchanged:: 0.6
+    SQLAlchemy uses the "native unicode" mode provided as of cx_oracle 5.
+    cx_oracle 5.0.2 or greater is recommended for support of NCLOB.
+    If not using cx_oracle 5, the NLS_LANG environment variable needs
+    to be set in order for the oracle client library to use proper encoding,
+    such as "AMERICAN_AMERICA.UTF8".
 
 Also note that Oracle supports unicode data through the NVARCHAR and NCLOB data types.
 When using the SQLAlchemy Unicode and UnicodeText types, these DDL types will be used
@@ -158,7 +160,7 @@ RESERVED_WORDS = \
         'AS IN VIEW EXCLUSIVE COMPRESS SYNONYM SELECT INSERT EXISTS '\
         'NOT TRIGGER ELSE CREATE INTERSECT PCTFREE DISTINCT USER '\
         'CONNECT SET MODE OF UNIQUE VARCHAR2 VARCHAR LOCK OR CHAR '\
-        'DECIMAL UNION PUBLIC AND START UID COMMENT CURRENT'.split())
+        'DECIMAL UNION PUBLIC AND START UID COMMENT CURRENT LEVEL'.split())
 
 NO_ARG_FNS = set('UID CURRENT_DATE SYSDATE USER '
                 'CURRENT_TIME CURRENT_TIMESTAMP'.split())
@@ -170,7 +172,9 @@ OracleRaw = RAW
 class NCLOB(sqltypes.Text):
     __visit_name__ = 'NCLOB'
 
-VARCHAR2 = VARCHAR
+class VARCHAR2(VARCHAR):
+    __visit_name__ = 'VARCHAR2'
+
 NVARCHAR2 = NVARCHAR
 
 class NUMBER(sqltypes.Numeric, sqltypes.Integer):
@@ -293,9 +297,9 @@ class OracleTypeCompiler(compiler.GenericTypeCompiler):
 
     def visit_unicode(self, type_):
         if self.dialect._supports_nchar:
-            return self.visit_NVARCHAR(type_)
+            return self.visit_NVARCHAR2(type_)
         else:
-            return self.visit_VARCHAR(type_)
+            return self.visit_VARCHAR2(type_)
 
     def visit_INTERVAL(self, type_):
         return "INTERVAL DAY%s TO SECOND%s" % (
@@ -306,6 +310,9 @@ class OracleTypeCompiler(compiler.GenericTypeCompiler):
                 "(%d)" % type_.second_precision or
                 "",
         )
+
+    def visit_LONG(self, type_):
+        return "LONG"
 
     def visit_TIMESTAMP(self, type_):
         if type_.timezone:
@@ -333,14 +340,27 @@ class OracleTypeCompiler(compiler.GenericTypeCompiler):
         else:
             return "%(name)s(%(precision)s, %(scale)s)" % {'name':name,'precision': precision, 'scale' : scale}
 
-    def visit_VARCHAR(self, type_):
-        if self.dialect._supports_char_length:
-            return "VARCHAR(%(length)s CHAR)" % {'length' : type_.length}
-        else:
-            return "VARCHAR(%(length)s)" % {'length' : type_.length}
+    def visit_string(self, type_): 
+        return self.visit_VARCHAR2(type_)
 
-    def visit_NVARCHAR(self, type_):
-        return "NVARCHAR2(%(length)s)" % {'length' : type_.length}
+    def visit_VARCHAR2(self, type_):
+        return self._visit_varchar(type_, '', '2')
+
+    def visit_NVARCHAR2(self, type_):
+        return self._visit_varchar(type_, 'N', '2')
+    visit_NVARCHAR = visit_NVARCHAR2
+
+    def visit_VARCHAR(self, type_):
+        return self._visit_varchar(type_, '', '')
+
+    def _visit_varchar(self, type_, n, num):
+        if not n and self.dialect._supports_char_length:
+            return "VARCHAR%(two)s(%(length)s CHAR)" % {
+                                                    'length' : type_.length, 
+                                                    'two':num}
+        else:
+            return "%(n)sVARCHAR%(two)s(%(length)s)" % {'length' : type_.length, 
+                                                        'two':num, 'n':n}
 
     def visit_text(self, type_):
         return self.visit_CLOB(type_)
@@ -466,7 +486,7 @@ class OracleCompiler(compiler.SQLCompiler):
         """Oracle doesn't like ``FROM table AS alias``.  Is the AS standard SQL??"""
 
         if asfrom or ashint:
-            alias_name = isinstance(alias.name, expression._generated_label) and \
+            alias_name = isinstance(alias.name, expression._truncated_label) and \
                             self._truncated_identifier("alias", alias.name) or alias.name
 
         if ashint:

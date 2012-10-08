@@ -1,5 +1,5 @@
 # engine/base.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -24,7 +24,7 @@ import inspect, StringIO, sys, operator
 from itertools import izip
 from sqlalchemy import exc, schema, util, types, log, interfaces, \
     event, events
-from sqlalchemy.sql import expression
+from sqlalchemy.sql import expression, util as sql_util
 from sqlalchemy import processors
 import collections
 
@@ -491,14 +491,23 @@ class Dialect(object):
         raise NotImplementedError()
 
     def do_executemany(self, cursor, statement, parameters, context=None):
-        """Provide an implementation of *cursor.executemany(statement,
-        parameters)*."""
+        """Provide an implementation of ``cursor.executemany(statement,
+        parameters)``."""
 
         raise NotImplementedError()
 
     def do_execute(self, cursor, statement, parameters, context=None):
-        """Provide an implementation of *cursor.execute(statement,
-        parameters)*."""
+        """Provide an implementation of ``cursor.execute(statement,
+        parameters)``."""
+
+        raise NotImplementedError()
+
+    def do_execute_no_params(self, cursor, statement, parameters, context=None):
+        """Provide an implementation of ``cursor.execute(statement)``.
+
+        The parameter collection should not be sent.
+
+        """
 
         raise NotImplementedError()
 
@@ -654,13 +663,10 @@ class ExecutionContext(object):
         raise NotImplementedError()
 
     def get_rowcount(self):
-        """Return the number of rows produced (by a SELECT query)
-        or affected (by an INSERT/UPDATE/DELETE statement).
-
-        Note that this row count may not be properly implemented 
-        in some dialects; this is indicated by the 
-        ``supports_sane_rowcount`` and ``supports_sane_multi_rowcount``
-        dialect attributes.
+        """Return the DBAPI ``cursor.rowcount`` value, or in some
+        cases an interpreted value.
+        
+        See :attr:`.ResultProxy.rowcount` for details on this.
 
         """
 
@@ -725,7 +731,7 @@ class Compiled(object):
     def construct_params(self, params=None):
         """Return the bind params for this compiled object.
 
-        :param params: a dict of string/object pairs whos values will
+        :param params: a dict of string/object pairs whose values will
                        override bind values compiled in to the
                        statement.
         """
@@ -777,12 +783,12 @@ class Connectable(object):
 
     def connect(self, **kwargs):
         """Return a :class:`.Connection` object.
-        
+
         Depending on context, this may be ``self`` if this object
         is already an instance of :class:`.Connection`, or a newly 
         procured :class:`.Connection` if this object is an instance
         of :class:`.Engine`.
-        
+
         """
 
     def contextual_connect(self):
@@ -793,7 +799,7 @@ class Connectable(object):
         is already an instance of :class:`.Connection`, or a newly 
         procured :class:`.Connection` if this object is an instance
         of :class:`.Engine`.
-        
+
         """
 
         raise NotImplementedError()
@@ -904,6 +910,12 @@ class Connection(Connectable):
         c.__dict__ = self.__dict__.copy()
         return c
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, type, value, traceback):
+        self.close()
+
     def execution_options(self, **opt):
         """ Set non-SQL options for the connection which take effect 
         during execution.
@@ -940,7 +952,7 @@ class Connection(Connectable):
         :param compiled_cache: Available on: Connection.
           A dictionary where :class:`.Compiled` objects
           will be cached when the :class:`.Connection` compiles a clause 
-          expression into a :class:`.Compiled` object.   
+          expression into a :class:`.Compiled` object.
           It is the user's responsibility to
           manage the size of this dictionary, which will have keys
           corresponding to the dialect, clause element, the column
@@ -953,7 +965,7 @@ class Connection(Connectable):
           some operations, including flush operations.  The caching
           used by the ORM internally supersedes a cache dictionary
           specified here.
-        
+
         :param isolation_level: Available on: Connection.
           Set the transaction isolation level for
           the lifespan of this connection.   Valid values include
@@ -962,13 +974,27 @@ class Connection(Connectable):
           database specific, including those for :ref:`sqlite_toplevel`, 
           :ref:`postgresql_toplevel` - see those dialect's documentation
           for further info.
-          
-          Note that this option necessarily affects the underying 
+
+          Note that this option necessarily affects the underlying 
           DBAPI connection for the lifespan of the originating 
           :class:`.Connection`, and is not per-execution. This 
-          setting is not removed until the underying DBAPI connection 
+          setting is not removed until the underlying DBAPI connection 
           is returned to the connection pool, i.e.
           the :meth:`.Connection.close` method is called.
+
+        :param no_parameters: When ``True``, if the final parameter 
+          list or dictionary is totally empty, will invoke the 
+          statement on the cursor as ``cursor.execute(statement)``,
+          not passing the parameter collection at all.
+          Some DBAPIs such as psycopg2 and mysql-python consider
+          percent signs as significant only when parameters are 
+          present; this option allows code to generate SQL
+          containing percent signs (and possibly other characters)
+          that is neutral regarding whether it's executed by the DBAPI
+          or piped into a script that's later invoked by 
+          command line tools.
+
+          .. versionadded:: 0.7.6
 
         :param stream_results: Available on: Connection, statement.
           Indicate to the dialect that results should be 
@@ -1031,6 +1057,13 @@ class Connection(Connectable):
         return getattr(self.__connection, 'is_valid', False)
 
     @property
+    def _still_open_and_connection_is_valid(self):
+        return \
+            not self.closed and \
+            not self.invalidated and \
+            getattr(self.__connection, 'is_valid', False)
+
+    @property
     def info(self):
         """A collection of per-DB-API connection instance properties."""
 
@@ -1040,7 +1073,7 @@ class Connection(Connectable):
         """Returns self.
 
         This ``Connectable`` interface method returns self, allowing
-        Connections to be used interchangably with Engines in most
+        Connections to be used interchangeably with Engines in most
         situations that require a bind.
         """
 
@@ -1050,7 +1083,7 @@ class Connection(Connectable):
         """Returns self.
 
         This ``Connectable`` interface method returns self, allowing
-        Connections to be used interchangably with Engines in most
+        Connections to be used interchangeably with Engines in most
         situations that require a bind.
         """
 
@@ -1089,7 +1122,7 @@ class Connection(Connectable):
     def detach(self):
         """Detach the underlying DB-API connection from its connection pool.
 
-        This Connection instance will remain useable.  When closed,
+        This Connection instance will remain usable.  When closed,
         the DB-API connection will be literally closed and not
         returned to its pool.  The pool will typically lazily create a
         new connection to replace the detached connection.
@@ -1106,17 +1139,35 @@ class Connection(Connectable):
 
     def begin(self):
         """Begin a transaction and return a transaction handle.
-        
-        The returned object is an instance of :class:`.Transaction`.
 
-        Repeated calls to ``begin`` on the same Connection will create
-        a lightweight, emulated nested transaction.  Only the
-        outermost transaction may ``commit``.  Calls to ``commit`` on
-        inner transactions are ignored.  Any transaction in the
-        hierarchy may ``rollback``, however.
+        The returned object is an instance of :class:`.Transaction`.
+        This object represents the "scope" of the transaction,
+        which completes when either the :meth:`.Transaction.rollback`
+        or :meth:`.Transaction.commit` method is called.
+
+        Nested calls to :meth:`.begin` on the same :class:`.Connection`
+        will return new :class:`.Transaction` objects that represent
+        an emulated transaction within the scope of the enclosing 
+        transaction, that is::
         
-        See also :meth:`.Connection.begin_nested`, 
-        :meth:`.Connection.begin_twophase`.
+            trans = conn.begin()   # outermost transaction
+            trans2 = conn.begin()  # "nested" 
+            trans2.commit()        # does nothing
+            trans.commit()         # actually commits
+            
+        Calls to :meth:`.Transaction.commit` only have an effect 
+        when invoked via the outermost :class:`.Transaction` object, though the
+        :meth:`.Transaction.rollback` method of any of the
+        :class:`.Transaction` objects will roll back the
+        transaction.
+
+        See also:
+        
+        :meth:`.Connection.begin_nested` - use a SAVEPOINT
+        
+        :meth:`.Connection.begin_twophase` - use a two phase /XID transaction
+        
+        :meth:`.Engine.begin` - context manager available from :class:`.Engine`.
 
         """
 
@@ -1150,7 +1201,7 @@ class Connection(Connectable):
     def begin_twophase(self, xid=None):
         """Begin a two-phase or XA transaction and return a transaction
         handle.
-        
+
         The returned object is an instance of :class:`.TwoPhaseTransaction`,
         which in addition to the methods provided by
         :class:`.Transaction`, also provides a :meth:`~.TwoPhaseTransaction.prepare`
@@ -1204,8 +1255,7 @@ class Connection(Connectable):
         if self._has_events:
             self.engine.dispatch.rollback(self)
 
-        if not self.closed and not self.invalidated and \
-                        self._connection_is_valid:
+        if self._still_open_and_connection_is_valid:
             if self._echo:
                 self.engine.logger.info("ROLLBACK")
             try:
@@ -1237,7 +1287,7 @@ class Connection(Connectable):
         if name is None:
             self.__savepoint_seq += 1
             name = 'sa_savepoint_%s' % self.__savepoint_seq
-        if self._connection_is_valid:
+        if self._still_open_and_connection_is_valid:
             self.engine.dialect.do_savepoint(self, name)
             return name
 
@@ -1245,7 +1295,7 @@ class Connection(Connectable):
         if self._has_events:
             self.engine.dispatch.rollback_savepoint(self, name, context)
 
-        if self._connection_is_valid:
+        if self._still_open_and_connection_is_valid:
             self.engine.dialect.do_rollback_to_savepoint(self, name)
         self.__transaction = context
 
@@ -1253,7 +1303,7 @@ class Connection(Connectable):
         if self._has_events:
             self.engine.dispatch.release_savepoint(self, name, context)
 
-        if self._connection_is_valid:
+        if self._still_open_and_connection_is_valid:
             self.engine.dialect.do_release_savepoint(self, name)
         self.__transaction = context
 
@@ -1261,14 +1311,14 @@ class Connection(Connectable):
         if self._has_events:
             self.engine.dispatch.begin_twophase(self, xid)
 
-        if self._connection_is_valid:
+        if self._still_open_and_connection_is_valid:
             self.engine.dialect.do_begin_twophase(self, xid)
 
     def _prepare_twophase_impl(self, xid):
         if self._has_events:
             self.engine.dispatch.prepare_twophase(self, xid)
 
-        if self._connection_is_valid:
+        if self._still_open_and_connection_is_valid:
             assert isinstance(self.__transaction, TwoPhaseTransaction)
             self.engine.dialect.do_prepare_twophase(self, xid)
 
@@ -1276,7 +1326,7 @@ class Connection(Connectable):
         if self._has_events:
             self.engine.dispatch.rollback_twophase(self, xid, is_prepared)
 
-        if self._connection_is_valid:
+        if self._still_open_and_connection_is_valid:
             assert isinstance(self.__transaction, TwoPhaseTransaction)
             self.engine.dialect.do_rollback_twophase(self, xid, is_prepared)
         self.__transaction = None
@@ -1285,7 +1335,7 @@ class Connection(Connectable):
         if self._has_events:
             self.engine.dispatch.commit_twophase(self, xid, is_prepared)
 
-        if self._connection_is_valid:
+        if self._still_open_and_connection_is_valid:
             assert isinstance(self.__transaction, TwoPhaseTransaction)
             self.engine.dialect.do_commit_twophase(self, xid, is_prepared)
         self.__transaction = None
@@ -1296,7 +1346,7 @@ class Connection(Connectable):
 
     def close(self):
         """Close this :class:`.Connection`.
-        
+
         This results in a release of the underlying database
         resources, that is, the DBAPI connection referenced
         internally. The DBAPI connection is typically restored
@@ -1307,7 +1357,7 @@ class Connection(Connectable):
         the DBAPI connection's ``rollback()`` method, regardless
         of any :class:`.Transaction` object that may be
         outstanding with regards to this :class:`.Connection`.
-        
+
         After :meth:`~.Connection.close` is called, the
         :class:`.Connection` is permanently in a closed state,
         and will allow no further operations.
@@ -1348,24 +1398,24 @@ class Connection(Connectable):
          * a :class:`.DDLElement` object
          * a :class:`.DefaultGenerator` object
          * a :class:`.Compiled` object
-        
+
         :param \*multiparams/\**params: represent bound parameter
          values to be used in the execution.   Typically,
          the format is either a collection of one or more
          dictionaries passed to \*multiparams::
-         
+
              conn.execute(
                  table.insert(), 
                  {"id":1, "value":"v1"},
                  {"id":2, "value":"v2"}
              )
-         
+
          ...or individual key/values interpreted by \**params::
-         
+
              conn.execute(
                  table.insert(), id=1, value="v1"
              )
-         
+
          In the case that a plain SQL string is passed, and the underlying 
          DBAPI accepts positional bind parameters, a collection of tuples
          or individual values in \*multiparams may be passed::
@@ -1374,21 +1424,21 @@ class Connection(Connectable):
                  "INSERT INTO table (id, value) VALUES (?, ?)",
                  (1, "v1"), (2, "v2")
              )
-         
+
              conn.execute(
                  "INSERT INTO table (id, value) VALUES (?, ?)",
                  1, "v1"
              )
-         
+
          Note above, the usage of a question mark "?" or other
          symbol is contingent upon the "paramstyle" accepted by the DBAPI 
          in use, which may be any of "qmark", "named", "pyformat", "format",
          "numeric".   See `pep-249 <http://www.python.org/dev/peps/pep-0249/>`_ 
          for details on paramstyle.
-         
+
          To execute a textual SQL statement which uses bound parameters in a
          DBAPI-agnostic way, use the :func:`~.expression.text` construct.
-        
+
         """
         for c in type(object).__mro__:
             if c in Connection.executors:
@@ -1420,7 +1470,8 @@ class Connection(Connectable):
         elif len(multiparams) == 1:
             zero = multiparams[0]
             if isinstance(zero, (list, tuple)):
-                if not zero or hasattr(zero[0], '__iter__'):
+                if not zero or hasattr(zero[0], '__iter__') and \
+                        not hasattr(zero[0], 'strip'):
                     return zero
                 else:
                     return [zero]
@@ -1429,7 +1480,8 @@ class Connection(Connectable):
             else:
                 return [[zero]]
         else:
-            if hasattr(multiparams[0], '__iter__'):
+            if hasattr(multiparams[0], '__iter__') and \
+                not hasattr(multiparams[0], 'strip'):
                 return multiparams
             else:
                 return [multiparams]
@@ -1617,13 +1669,19 @@ class Connection(Connectable):
 
         if self._echo:
             self.engine.logger.info(statement)
-            self.engine.logger.info("%r", parameters)
+            self.engine.logger.info("%r", 
+                    sql_util._repr_params(parameters, batches=10))
         try:
             if context.executemany:
                 self.dialect.do_executemany(
                                     cursor, 
                                     statement, 
                                     parameters, 
+                                    context)
+            elif not parameters and context.no_parameters:
+                self.dialect.do_execute_no_params(
+                                    cursor, 
+                                    statement, 
                                     context)
             else:
                 self.dialect.do_execute(
@@ -1749,10 +1807,19 @@ class Connection(Connectable):
                 (statement is not None and context is None)
 
             if should_wrap and context:
+                if self._has_events:
+                    self.engine.dispatch.dbapi_error(self, 
+                                                    cursor, 
+                                                    statement, 
+                                                    parameters, 
+                                                    context, 
+                                                    e)
                 context.handle_dbapi_exception(e)
 
             is_disconnect = isinstance(e, self.dialect.dbapi.Error) and \
                                 self.dialect.is_disconnect(e, self.__connection, cursor)
+
+
             if is_disconnect:
                 self.invalidate(e)
                 self.engine.dispose()
@@ -1839,33 +1906,41 @@ class Connection(Connectable):
         """Execute the given function within a transaction boundary.
 
         The function is passed this :class:`.Connection` 
-        as the first argument, followed by the given \*args and \**kwargs.
-
-        This is a shortcut for explicitly invoking 
-        :meth:`.Connection.begin`, calling :meth:`.Transaction.commit`
-        upon success or :meth:`.Transaction.rollback` upon an 
-        exception raise::
+        as the first argument, followed by the given \*args and \**kwargs,
+        e.g.::
         
             def do_something(conn, x, y):
                 conn.execute("some statement", {'x':x, 'y':y})
-            
-            conn.transaction(do_something, 5, 10)
-        
-        Note that context managers (i.e. the ``with`` statement)
-        present a more modern way of accomplishing the above,
-        using the :class:`.Transaction` object as a base::
-        
-            with conn.begin():
-                conn.execute("some statement", {'x':5, 'y':10})
 
-        One advantage to the :meth:`.Connection.transaction`
-        method is that the same method is also available
-        on :class:`.Engine` as :meth:`.Engine.transaction` - 
-        this method procures a :class:`.Connection` and then
-        performs the same operation, allowing equivalent
-        usage with either a :class:`.Connection` or :class:`.Engine`
-        without needing to know what kind of object 
-        it is.
+            conn.transaction(do_something, 5, 10)
+
+        The operations inside the function are all invoked within the
+        context of a single :class:`.Transaction`.   
+        Upon success, the transaction is committed.  If an 
+        exception is raised, the transaction is rolled back
+        before propagating the exception.
+
+        .. note::
+
+           The :meth:`.transaction` method is superseded by
+           the usage of the Python ``with:`` statement, which can
+           be used with :meth:`.Connection.begin`::
+        
+               with conn.begin():
+                   conn.execute("some statement", {'x':5, 'y':10})
+            
+           As well as with :meth:`.Engine.begin`::
+           
+               with engine.begin() as conn:
+                   conn.execute("some statement", {'x':5, 'y':10})
+        
+        See also:
+        
+            :meth:`.Engine.begin` - engine-level transactional 
+            context
+             
+            :meth:`.Engine.transaction` - engine-level version of
+            :meth:`.Connection.transaction`
 
         """
 
@@ -1881,15 +1956,15 @@ class Connection(Connectable):
     def run_callable(self, callable_, *args, **kwargs):
         """Given a callable object or function, execute it, passing
         a :class:`.Connection` as the first argument.
-        
+
         The given \*args and \**kwargs are passed subsequent
         to the :class:`.Connection` argument.
-        
+
         This function, along with :meth:`.Engine.run_callable`, 
         allows a function to be run with a :class:`.Connection`
         or :class:`.Engine` object without the need to know
         which one is being dealt with.
-        
+
         """
         return callable_(self, *args, **kwargs)
 
@@ -1900,11 +1975,11 @@ class Connection(Connectable):
 
 class Transaction(object):
     """Represent a database transaction in progress.
-    
+
     The :class:`.Transaction` object is procured by 
     calling the :meth:`~.Connection.begin` method of
     :class:`.Connection`::
-        
+
         from sqlalchemy import create_engine
         engine = create_engine("postgresql://scott:tiger@localhost/test")
         connection = engine.connect()
@@ -1917,7 +1992,7 @@ class Transaction(object):
     also implements a context manager interface so that 
     the Python ``with`` statement can be used with the 
     :meth:`.Connection.begin` method::
-    
+
         with connection.begin():
             connection.execute("insert into x (a, b) values (1, 2)")
 
@@ -1925,7 +2000,7 @@ class Transaction(object):
 
     See also:  :meth:`.Connection.begin`, :meth:`.Connection.begin_twophase`,
     :meth:`.Connection.begin_nested`.
-    
+
     .. index::
       single: thread safety; Transaction
     """
@@ -2006,9 +2081,9 @@ class NestedTransaction(Transaction):
 
     A new :class:`.NestedTransaction` object may be procured
     using the :meth:`.Connection.begin_nested` method.
-    
+
     The interface is the same as that of :class:`.Transaction`.
-    
+
     """
     def __init__(self, connection, parent):
         super(NestedTransaction, self).__init__(connection, parent)
@@ -2027,13 +2102,13 @@ class NestedTransaction(Transaction):
 
 class TwoPhaseTransaction(Transaction):
     """Represent a two-phase transaction.
-    
+
     A new :class:`.TwoPhaseTransaction` object may be procured
     using the :meth:`.Connection.begin_twophase` method.
-    
+
     The interface is the same as that of :class:`.Transaction`
     with the addition of the :meth:`prepare` method.
-    
+
     """
     def __init__(self, connection, xid):
         super(TwoPhaseTransaction, self).__init__(connection, None)
@@ -2043,9 +2118,9 @@ class TwoPhaseTransaction(Transaction):
 
     def prepare(self):
         """Prepare this :class:`.TwoPhaseTransaction`.
-        
+
         After a PREPARE, the transaction can be committed.
-        
+
         """
         if not self._parent.is_active:
             raise exc.InvalidRequestError("This transaction is inactive")
@@ -2065,8 +2140,14 @@ class Engine(Connectable, log.Identified):
     :class:`~sqlalchemy.engine.base.Dialect` together to provide a source 
     of database connectivity and behavior.
 
-    An :class:`.Engine` object is instantiated publically using the 
+    An :class:`.Engine` object is instantiated publicly using the 
     :func:`~sqlalchemy.create_engine` function.
+
+    See also:
+
+    :ref:`engines_toplevel`
+
+    :ref:`connections_toplevel`
 
     """
 
@@ -2103,13 +2184,13 @@ class Engine(Connectable, log.Identified):
     def update_execution_options(self, **opt):
         """Update the default execution_options dictionary 
         of this :class:`.Engine`.
-        
+
         The given keys/values in \**opt are added to the
         default execution options that will be used for 
         all connections.  The initial contents of this dictionary
-        can be sent via the ``execution_options`` paramter
+        can be sent via the ``execution_options`` parameter
         to :func:`.create_engine`.
-        
+
         See :meth:`.Connection.execution_options` for more
         details on execution options.
 
@@ -2194,7 +2275,7 @@ class Engine(Connectable, log.Identified):
 
     @property
     @util.deprecated("0.7", 
-                "Use :attr:`.expression.func` to create function constructs.")
+                "Use :attr:`~sqlalchemy.sql.expression.func` to create function constructs.")
     def func(self):
         return expression._FunctionGenerator(bind=self)
 
@@ -2224,19 +2305,100 @@ class Engine(Connectable, log.Identified):
             if connection is None:
                 conn.close()
 
+    class _trans_ctx(object):
+        def __init__(self, conn, transaction, close_with_result):
+            self.conn = conn
+            self.transaction = transaction
+            self.close_with_result = close_with_result
+
+        def __enter__(self):
+            return self.conn
+
+        def __exit__(self, type, value, traceback):
+            if type is not None:
+                self.transaction.rollback()
+            else:
+                self.transaction.commit()
+            if not self.close_with_result:
+                self.conn.close()
+
+    def begin(self, close_with_result=False):
+        """Return a context manager delivering a :class:`.Connection`
+        with a :class:`.Transaction` established.
+
+        E.g.::
+        
+            with engine.begin() as conn:
+                conn.execute("insert into table (x, y, z) values (1, 2, 3)")
+                conn.execute("my_special_procedure(5)")
+
+        Upon successful operation, the :class:`.Transaction` 
+        is committed.  If an error is raised, the :class:`.Transaction`
+        is rolled back.  
+        
+        The ``close_with_result`` flag is normally ``False``, and indicates
+        that the :class:`.Connection` will be closed when the operation
+        is complete.   When set to ``True``, it indicates the :class:`.Connection`
+        is in "single use" mode, where the :class:`.ResultProxy`
+        returned by the first call to :meth:`.Connection.execute` will
+        close the :class:`.Connection` when that :class:`.ResultProxy`
+        has exhausted all result rows.
+
+        .. versionadded:: 0.7.6
+        
+        See also:
+        
+        :meth:`.Engine.connect` - procure a :class:`.Connection` from
+        an :class:`.Engine`.
+
+        :meth:`.Connection.begin` - start a :class:`.Transaction`
+        for a particular :class:`.Connection`.
+
+        """
+        conn = self.contextual_connect(close_with_result=close_with_result)
+        try:
+            trans = conn.begin()
+        except:
+            conn.close()
+            raise
+        return Engine._trans_ctx(conn, trans, close_with_result)
+
     def transaction(self, callable_, *args, **kwargs):
         """Execute the given function within a transaction boundary.
 
-        The function is passed a newly procured
-        :class:`.Connection` as the first argument, followed by
-        the given \*args and \**kwargs. The :class:`.Connection`
-        is then closed (returned to the pool) when the operation
-        is complete.
+        The function is passed a :class:`.Connection` newly procured
+        from :meth:`.Engine.contextual_connect` as the first argument, 
+        followed by the given \*args and \**kwargs.
         
-        This method can be used interchangeably with
-        :meth:`.Connection.transaction`. See that method for
-        more details on usage as well as a modern alternative
-        using context managers (i.e. the ``with`` statement).
+        e.g.::
+        
+            def do_something(conn, x, y):
+                conn.execute("some statement", {'x':x, 'y':y})
+
+            engine.transaction(do_something, 5, 10)
+        
+        The operations inside the function are all invoked within the
+        context of a single :class:`.Transaction`.   
+        Upon success, the transaction is committed.  If an 
+        exception is raised, the transaction is rolled back
+        before propagating the exception.
+
+        .. note::
+
+           The :meth:`.transaction` method is superseded by
+           the usage of the Python ``with:`` statement, which can
+           be used with :meth:`.Engine.begin`::
+           
+               with engine.begin() as conn:
+                   conn.execute("some statement", {'x':5, 'y':10})
+        
+        See also:
+        
+            :meth:`.Engine.begin` - engine-level transactional 
+            context
+             
+            :meth:`.Connection.transaction` - connection-level version of
+            :meth:`.Engine.transaction`
 
         """
 
@@ -2249,15 +2411,15 @@ class Engine(Connectable, log.Identified):
     def run_callable(self, callable_, *args, **kwargs):
         """Given a callable object or function, execute it, passing
         a :class:`.Connection` as the first argument.
-        
+
         The given \*args and \**kwargs are passed subsequent
         to the :class:`.Connection` argument.
-        
+
         This function, along with :meth:`.Connection.run_callable`, 
         allows a function to be run with a :class:`.Connection`
         or :class:`.Engine` object without the need to know
         which one is being dealt with.
-        
+
         """
         conn = self.contextual_connect()
         try:
@@ -2378,19 +2540,19 @@ class Engine(Connectable, log.Identified):
 
     def raw_connection(self):
         """Return a "raw" DBAPI connection from the connection pool.
-        
+
         The returned object is a proxied version of the DBAPI 
         connection object used by the underlying driver in use.
         The object will have all the same behavior as the real DBAPI
         connection, except that its ``close()`` method will result in the
         connection being returned to the pool, rather than being closed
         for real.
-        
+
         This method provides direct DBAPI connection access for
         special situations.  In most situations, the :class:`.Connection`
         object should be used, which is procured using the
         :meth:`.Engine.connect` method.
-        
+
         """
 
         return self.pool.unique_connection()
@@ -2449,9 +2611,9 @@ except ImportError:
 
         def __getitem__(self, key):
             try:
-                processor, index = self._keymap[key]
+                processor, obj, index = self._keymap[key]
             except KeyError:
-                processor, index = self._parent._key_fallback(key)
+                processor, obj, index = self._parent._key_fallback(key)
             except TypeError:
                 if isinstance(key, slice):
                     l = []
@@ -2475,7 +2637,6 @@ except ImportError:
 
         def __getattr__(self, name):
             try:
-                # TODO: no test coverage here
                 return self[name]
             except KeyError, e:
                 raise AttributeError(e.args[0])
@@ -2563,6 +2724,10 @@ class ResultMetaData(object):
         context = parent.context
         dialect = context.dialect
         typemap = dialect.dbapi_type_map
+        translate_colname = context._translate_colname
+
+        # high precedence key values.
+        primary_keymap = {}
 
         for i, rec in enumerate(metadata):
             colname = rec[0]
@@ -2570,6 +2735,9 @@ class ResultMetaData(object):
 
             if dialect.description_encoding:
                 colname = dialect._description_decoder(colname)
+
+            if translate_colname:
+                colname, untranslated = translate_colname(colname)
 
             if context.result_map:
                 try:
@@ -2584,19 +2752,21 @@ class ResultMetaData(object):
             processor = type_._cached_result_processor(dialect, coltype)
 
             processors.append(processor)
-            rec = (processor, i)
+            rec = (processor, obj, i)
 
             # indexes as keys. This is only needed for the Python version of
             # RowProxy (the C version uses a faster path for integer indexes).
-            keymap[i] = rec
+            primary_keymap[i] = rec
 
-            # Column names as keys 
-            if keymap.setdefault(name.lower(), rec) is not rec: 
-                # We do not raise an exception directly because several
-                # columns colliding by name is not a problem as long as the
-                # user does not try to access them (ie use an index directly,
-                # or the more precise ColumnElement)
-                keymap[name.lower()] = (processor, None)
+            # populate primary keymap, looking for conflicts.
+            if primary_keymap.setdefault(name.lower(), rec) is not rec: 
+                # place a record that doesn't have the "index" - this
+                # is interpreted later as an AmbiguousColumnError,
+                # but only when actually accessed.   Columns 
+                # colliding by name is not a problem if those names
+                # aren't used; integer and ColumnElement access is always
+                # unambiguous.
+                primary_keymap[name.lower()] = (processor, obj, None)
 
             if dialect.requires_name_normalize:
                 colname = dialect.normalize_name(colname)
@@ -2606,10 +2776,20 @@ class ResultMetaData(object):
                 for o in obj:
                     keymap[o] = rec
 
+            if translate_colname and \
+                untranslated:
+                keymap[untranslated] = rec
+
+        # overwrite keymap values with those of the
+        # high precedence keymap.
+        keymap.update(primary_keymap)
+
         if parent._echo:
             context.engine.logger.debug(
                 "Col %r", tuple(x[0] for x in metadata))
 
+    @util.pending_deprecation("0.8", "sqlite dialect uses "
+                    "_translate_colname() now")
     def _set_keymap_synonym(self, name, origname):
         """Set a synonym for the given name.
 
@@ -2618,9 +2798,9 @@ class ResultMetaData(object):
         row.
 
         """
-        rec = (processor, i) = self._keymap[origname.lower()]
+        rec = (processor, obj, i) = self._keymap[origname.lower()]
         if self._keymap.setdefault(name, rec) is not rec:
-            self._keymap[name] = (processor, None)
+            self._keymap[name] = (processor, obj, None)
 
     def _key_fallback(self, key, raiseerr=True):
         map = self._keymap
@@ -2629,12 +2809,25 @@ class ResultMetaData(object):
             result = map.get(key.lower())
         # fallback for targeting a ColumnElement to a textual expression
         # this is a rare use case which only occurs when matching text()
-        # constructs to ColumnElements, and after a pickle/unpickle roundtrip
+        # or colummn('name') constructs to ColumnElements, or after a 
+        # pickle/unpickle roundtrip
         elif isinstance(key, expression.ColumnElement):
             if key._label and key._label.lower() in map:
                 result = map[key._label.lower()]
             elif hasattr(key, 'name') and key.name.lower() in map:
+                # match is only on name.
                 result = map[key.name.lower()]
+            # search extra hard to make sure this 
+            # isn't a column/label name overlap.
+            # this check isn't currently available if the row
+            # was unpickled.
+            if result is not None and \
+                result[1] is not None:
+                for obj in result[1]:
+                    if key._compare_name_for_result(obj):
+                        break
+                else:
+                    result = None
         if result is None:
             if raiseerr:
                 raise exc.NoSuchColumnError(
@@ -2656,7 +2849,7 @@ class ResultMetaData(object):
         return {
             '_pickled_keymap': dict(
                 (key, index)
-                for key, (processor, index) in self._keymap.iteritems()
+                for key, (processor, obj, index) in self._keymap.iteritems()
                 if isinstance(key, (basestring, int))
             ),
             'keys': self.keys
@@ -2668,7 +2861,9 @@ class ResultMetaData(object):
         self._processors = [None for _ in xrange(len(state['keys']))]
         self._keymap = keymap = {}
         for key, index in state['_pickled_keymap'].iteritems():
-            keymap[key] = (None, index)
+            # not preserving "obj" here, unfortunately our
+            # proxy comparison fails with the unpickle
+            keymap[key] = (None, None, index)
         self.keys = state['keys']
         self._echo = False
 
@@ -2726,18 +2921,41 @@ class ResultProxy(object):
     def rowcount(self):
         """Return the 'rowcount' for this result.
 
-        The 'rowcount' reports the number of rows affected
-        by an UPDATE or DELETE statement.  It has *no* other
-        uses and is not intended to provide the number of rows
-        present from a SELECT.
+        The 'rowcount' reports the number of rows *matched*
+        by the WHERE criterion of an UPDATE or DELETE statement.  
+        
+        .. note::
+        
+           Notes regarding :attr:`.ResultProxy.rowcount`:
+           
+           
+           * This attribute returns the number of rows *matched*,
+             which is not necessarily the same as the number of rows
+             that were actually *modified* - an UPDATE statement, for example,
+             may have no net change on a given row if the SET values
+             given are the same as those present in the row already.
+             Such a row would be matched but not modified.
+             On backends that feature both styles, such as MySQL, 
+             rowcount is configured by default to return the match 
+             count in all cases.
 
-        Note that this row count may not be properly implemented in some
-        dialects; this is indicated by
-        :meth:`~sqlalchemy.engine.base.ResultProxy.supports_sane_rowcount()`
-        and
-        :meth:`~sqlalchemy.engine.base.ResultProxy.supports_sane_multi_rowcount()`.
-        ``rowcount()`` also may not work at this time for a statement that
-        uses ``returning()``.
+           * :attr:`.ResultProxy.rowcount` is *only* useful in conjunction
+             with an UPDATE or DELETE statement.  Contrary to what the Python
+             DBAPI says, it does *not* return the
+             number of rows available from the results of a SELECT statement
+             as DBAPIs cannot support this functionality when rows are 
+             unbuffered.
+        
+           * :attr:`.ResultProxy.rowcount` may not be fully implemented by
+             all dialects.  In particular, most DBAPIs do not support an
+             aggregate rowcount result from an executemany call.
+             The :meth:`.ResultProxy.supports_sane_rowcount` and 
+             :meth:`.ResultProxy.supports_sane_multi_rowcount` methods
+             will report from the dialect if each usage is known to be
+             supported.
+         
+           * Statements that use RETURNING may not return a correct
+             rowcount.
 
         """
         try:
@@ -2773,7 +2991,7 @@ class ResultProxy(object):
     @property
     def returns_rows(self):
         """True if this :class:`.ResultProxy` returns rows.
-        
+
         I.e. if it is legal to call the methods 
         :meth:`~.ResultProxy.fetchone`, 
         :meth:`~.ResultProxy.fetchmany`
@@ -2787,12 +3005,12 @@ class ResultProxy(object):
         """True if this :class:`.ResultProxy` is the result
         of a executing an expression language compiled 
         :func:`.expression.insert` construct.
-        
+
         When True, this implies that the 
         :attr:`inserted_primary_key` attribute is accessible,
         assuming the statement did not include
         a user defined "returning" construct.
-        
+
         """
         return self.context.isinsert
 
@@ -2840,7 +3058,7 @@ class ResultProxy(object):
     @util.memoized_property
     def inserted_primary_key(self):
         """Return the primary key for the row just inserted.
-        
+
         The return value is a list of scalar values 
         corresponding to the list of primary key columns
         in the target table.
@@ -2848,7 +3066,7 @@ class ResultProxy(object):
         This only applies to single row :func:`.insert` 
         constructs which did not explicitly specify 
         :meth:`.Insert.returning`.
-        
+
         Note that primary key columns which specify a
         server_default clause, 
         or otherwise do not qualify as "autoincrement"
@@ -2917,12 +3135,20 @@ class ResultProxy(object):
         return self.context.prefetch_cols
 
     def supports_sane_rowcount(self):
-        """Return ``supports_sane_rowcount`` from the dialect."""
+        """Return ``supports_sane_rowcount`` from the dialect.
+        
+        See :attr:`.ResultProxy.rowcount` for background.
+        
+        """
 
         return self.dialect.supports_sane_rowcount
 
     def supports_sane_multi_rowcount(self):
-        """Return ``supports_sane_multi_rowcount`` from the dialect."""
+        """Return ``supports_sane_multi_rowcount`` from the dialect.
+
+        See :attr:`.ResultProxy.rowcount` for background.
+        
+        """
 
         return self.dialect.supports_sane_multi_rowcount
 
@@ -3201,8 +3427,8 @@ class BufferedColumnResultProxy(ResultProxy):
         # replace the all type processors by None processors.
         metadata._processors = [None for _ in xrange(len(metadata.keys))]
         keymap = {}
-        for k, (func, index) in metadata._keymap.iteritems():
-            keymap[k] = (None, index)
+        for k, (func, obj, index) in metadata._keymap.iteritems():
+            keymap[k] = (None, obj, index)
         self._metadata._keymap = keymap
 
     def fetchall(self):

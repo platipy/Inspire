@@ -1,5 +1,5 @@
 # ext/horizontal_shard.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -10,7 +10,7 @@ Defines a rudimental 'horizontal sharding' system which allows a Session to
 distribute queries and persistence operations across multiple databases.
 
 For a usage example, see the :ref:`examples_sharding` example included in 
-the source distrbution.
+the source distribution.
 
 """
 

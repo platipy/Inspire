@@ -1,5 +1,5 @@
 # informix/base.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 # coding: gbk
 #
 # This module is part of SQLAlchemy and is released under
@@ -7,8 +7,11 @@
 
 """Support for the Informix database.
 
-This dialect is mostly functional as of SQLAlchemy 0.6.5.
+.. note::
 
+    The Informix dialect functions on current SQLAlchemy versions
+    but is not regularly tested, and may have many issues and 
+    caveats not currently handled.
 
 """
 
@@ -23,7 +26,7 @@ from sqlalchemy import types as sqltypes
 RESERVED_WORDS = set(
     ["abs", "absolute", "access", "access_method", "acos", "active", "add",
     "address", "add_months", "admin", "after", "aggregate", "alignment",
-    "all", "allocate", "all_rows", "altere", "and", "ansi", "any", "append",
+    "all", "allocate", "all_rows", "alter", "and", "ansi", "any", "append",
     "array", "as", "asc", "ascii", "asin", "at", "atan", "atan2", "attach",
     "attributes", "audit", "authentication", "authid", "authorization",
     "authorized", "auto", "autofree", "auto_reprepare", "auto_stat_mode",

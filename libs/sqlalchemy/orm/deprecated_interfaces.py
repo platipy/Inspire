@@ -1,5 +1,5 @@
 # orm/deprecated_interfaces.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -11,7 +11,9 @@ from interfaces import EXT_CONTINUE
 class MapperExtension(object):
     """Base implementation for :class:`.Mapper` event hooks.
 
-    .. note:: :class:`.MapperExtension` is deprecated.   Please
+    .. note:: 
+       
+       :class:`.MapperExtension` is deprecated.   Please
        refer to :func:`.event.listen` as well as 
        :class:`.MapperEvents`.
 
@@ -245,10 +247,11 @@ class MapperExtension(object):
         instance population will not proceed, giving this extension an
         opportunity to populate the instance itself, if desired.
 
-        As of 0.5, most usages of this hook are obsolete.  For a
-        generic "object has been newly created from a row" hook, use
-        ``reconstruct_instance()``, or the ``@orm.reconstructor``
-        decorator.
+        .. deprecated:: 0.5
+            Most usages of this hook are obsolete.  For a
+            generic "object has been newly created from a row" hook, use
+            ``reconstruct_instance()``, or the ``@orm.reconstructor``
+            decorator.
 
         """
         return EXT_CONTINUE
@@ -375,7 +378,9 @@ class SessionExtension(object):
 
     """Base implementation for :class:`.Session` event hooks.
 
-    .. note:: :class:`.SessionExtension` is deprecated.   Please
+    .. note:: 
+    
+       :class:`.SessionExtension` is deprecated.   Please
        refer to :func:`.event.listen` as well as 
        :class:`.SessionEvents`.
 
@@ -493,7 +498,9 @@ class AttributeExtension(object):
     """Base implementation for :class:`.AttributeImpl` event hooks, events
     that fire upon attribute mutations in user code.
 
-    .. note:: :class:`.AttributeExtension` is deprecated.   Please
+    .. note:: 
+    
+       :class:`.AttributeExtension` is deprecated.   Please
        refer to :func:`.event.listen` as well as 
        :class:`.AttributeEvents`.
 

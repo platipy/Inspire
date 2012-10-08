@@ -1,5 +1,5 @@
 # orm/unitofwork.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -14,7 +14,7 @@ organizes them in order of dependency, and executes.
 
 from sqlalchemy import util, event
 from sqlalchemy.util import topological
-from sqlalchemy.orm import attributes, interfaces
+from sqlalchemy.orm import attributes, interfaces, persistence
 from sqlalchemy.orm import util as mapperutil
 session = util.importlater("sqlalchemy.orm", "session")
 
@@ -66,7 +66,10 @@ def track_cascade_events(descriptor, prop):
                     not sess._contains_state(newvalue_state):
                     sess._save_or_update_state(newvalue_state)
 
-            if oldvalue is not None and prop.cascade.delete_orphan:
+            if oldvalue is not None and \
+                oldvalue is not attributes.PASSIVE_NO_RESULT and \
+                prop.cascade.delete_orphan:
+                # possible to reach here with attributes.NEVER_SET ?
                 oldvalue_state = attributes.instance_state(oldvalue)
 
                 if oldvalue_state in sess._new and \
@@ -308,9 +311,10 @@ class UOWTransaction(object):
 
         #sort = topological.sort(self.dependencies, postsort_actions)
         #print "--------------"
-        #print self.dependencies
-        #print list(sort)
-        #print "COUNT OF POSTSORT ACTIONS", len(postsort_actions)
+        #print "\ndependencies:", self.dependencies
+        #print "\ncycles:", self.cycles
+        #print "\nsort:", list(sort)
+        #print "\nCOUNT OF POSTSORT ACTIONS", len(postsort_actions)
 
         # execute
         if self.cycles:
@@ -458,7 +462,7 @@ class IssuePostUpdate(PostSortRec):
         states, cols = uow.post_update_states[self.mapper]
         states = [s for s in states if uow.states[s][0] == self.isdelete]
 
-        self.mapper._post_update(states, uow, cols)
+        persistence.post_update(self.mapper, states, uow, cols)
 
 class SaveUpdateAll(PostSortRec):
     def __init__(self, uow, mapper):
@@ -466,7 +470,7 @@ class SaveUpdateAll(PostSortRec):
         assert mapper is mapper.base_mapper
 
     def execute(self, uow):
-        self.mapper._save_obj(
+        persistence.save_obj(self.mapper, 
             uow.states_for_mapper_hierarchy(self.mapper, False, False),
             uow
         )
@@ -489,7 +493,7 @@ class DeleteAll(PostSortRec):
         assert mapper is mapper.base_mapper
 
     def execute(self, uow):
-        self.mapper._delete_obj(
+        persistence.delete_obj(self.mapper,
             uow.states_for_mapper_hierarchy(self.mapper, True, False),
             uow
         )
@@ -547,7 +551,7 @@ class SaveUpdateState(PostSortRec):
                         if r.__class__ is cls_ and 
                         r.mapper is mapper]
         recs.difference_update(our_recs)
-        mapper._save_obj(
+        persistence.save_obj(mapper,
                         [self.state] + 
                         [r.state for r in our_recs], 
                         uow)
@@ -571,7 +575,7 @@ class DeleteState(PostSortRec):
                         r.mapper is mapper]
         recs.difference_update(our_recs)
         states = [self.state] + [r.state for r in our_recs]
-        mapper._delete_obj(
+        persistence.delete_obj(mapper,
                         [s for s in states if uow.states[s][0]], 
                         uow)
 

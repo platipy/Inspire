@@ -1,5 +1,5 @@
 # sqlite/base.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -16,7 +16,7 @@ SQLite does not have built-in DATE, TIME, or DATETIME types, and pysqlite does n
 out of the box functionality for translating values between Python `datetime` objects
 and a SQLite-supported format.  SQLAlchemy's own :class:`~sqlalchemy.types.DateTime`
 and related types provide date formatting and parsing functionality when SQlite is used.
-The implementation classes are :class:`.DATETIME`, :class:`.DATE` and :class:`.TIME`.
+The implementation classes are :class:`~.sqlite.DATETIME`, :class:`~.sqlite.DATE` and :class:`~.sqlite.TIME`.
 These types represent dates and times as ISO formatted strings, which also nicely
 support ordering.   There's no reliance on typical "libc" internals for these functions
 so historical dates are fully supported.
@@ -46,10 +46,44 @@ to the Table construct::
 Transaction Isolation Level
 ---------------------------
 
-:func:`create_engine` accepts an ``isolation_level`` parameter which results in 
+:func:`.create_engine` accepts an ``isolation_level`` parameter which results in 
 the command ``PRAGMA read_uncommitted <level>`` being invoked for every new 
 connection.   Valid values for this parameter are ``SERIALIZABLE`` and 
 ``READ UNCOMMITTED`` corresponding to a value of 0 and 1, respectively.
+See the section :ref:`pysqlite_serializable` for an important workaround
+when using serializable isolation with Pysqlite.
+
+Database Locking Behavior / Concurrency
+---------------------------------------
+
+Note that SQLite is not designed for a high level of concurrency.   The database
+itself, being a file, is locked completely during write operations and within 
+transactions, meaning exactly one connection has exclusive access to the database
+during this period - all other connections will be blocked during this time.
+
+The Python DBAPI specification also calls for a connection model that is always
+in a transaction; there is no BEGIN method, only commit and rollback.  This implies
+that a SQLite DBAPI driver would technically allow only serialized access to a 
+particular database file at all times.   The pysqlite driver attempts to ameliorate this by
+deferring the actual BEGIN statement until the first DML (INSERT, UPDATE, or
+DELETE) is received within a transaction.  While this breaks serializable isolation,
+it at least delays the exclusive locking inherent in SQLite's design.
+
+SQLAlchemy's default mode of usage with the ORM is known 
+as "autocommit=False", which means the moment the :class:`.Session` begins to be 
+used, a transaction is begun.   As the :class:`.Session` is used, the autoflush
+feature, also on by default, will flush out pending changes to the database 
+before each query.  The effect of this is that a :class:`.Session` used in its
+default mode will often emit DML early on, long before the transaction is actually
+committed.  This again will have the effect of serializing access to the SQLite 
+database.   If highly concurrent reads are desired against the SQLite database,
+it is advised that the autoflush feature be disabled, and potentially even
+that autocommit be re-enabled, which has the effect of each SQL statement and
+flush committing changes immediately.
+
+For more information on SQLite's lack of concurrency by design, please 
+see `Situations Where Another RDBMS May Work Better - High Concurrency <http://www.sqlite.org/whentouse.html>`_
+near the bottom of the page.
 
 """
 
@@ -101,13 +135,13 @@ class DATETIME(_DateTimeMixin, sqltypes.DateTime):
                 regexp=re.compile("(\d+)/(\d+)/(\d+) (\d+)-(\d+)-(\d+)(?:-(\d+))?")
             )
     
-    :param storage_format: format string which will be appled to the 
+    :param storage_format: format string which will be applied to the 
      tuple ``(value.year, value.month, value.day, value.hour,
      value.minute, value.second, value.microsecond)``, given a
      Python datetime.datetime() object.
     
     :param regexp: regular expression which will be applied to 
-     incoming result rows. The resulting match object is appled to
+     incoming result rows. The resulting match object is applied to
      the Python datetime() constructor via ``*map(int,
      match_obj.groups(0))``.
     """
@@ -162,12 +196,12 @@ class DATE(_DateTimeMixin, sqltypes.Date):
                 regexp=re.compile("(\d+)/(\d+)/(\d+)")
             )
     
-    :param storage_format: format string which will be appled to the 
+    :param storage_format: format string which will be applied to the 
      tuple ``(value.year, value.month, value.day)``,
      given a Python datetime.date() object.
     
     :param regexp: regular expression which will be applied to 
-     incoming result rows. The resulting match object is appled to
+     incoming result rows. The resulting match object is applied to
      the Python date() constructor via ``*map(int,
      match_obj.groups(0))``.
      
@@ -219,12 +253,12 @@ class TIME(_DateTimeMixin, sqltypes.Time):
                 regexp=re.compile("(\d+)-(\d+)-(\d+)-(?:-(\d+))?")
             )
     
-    :param storage_format: format string which will be appled 
+    :param storage_format: format string which will be applied 
      to the tuple ``(value.hour, value.minute, value.second,
      value.microsecond)``, given a Python datetime.time() object.
     
     :param regexp: regular expression which will be applied to 
-     incoming result rows. The resulting match object is appled to
+     incoming result rows. The resulting match object is applied to
      the Python time() constructor via ``*map(int,
      match_obj.groups(0))``.
 
@@ -300,6 +334,12 @@ class SQLiteCompiler(compiler.SQLCompiler):
     def visit_now_func(self, fn, **kw):
         return "CURRENT_TIMESTAMP"
 
+    def visit_true(self, expr, **kw):
+        return '1'
+
+    def visit_false(self, expr, **kw):
+        return '0'
+
     def visit_char_length_func(self, fn, **kw):
         return "length%s" % self.function_argspec(fn)
 
@@ -314,7 +354,7 @@ class SQLiteCompiler(compiler.SQLCompiler):
             return "CAST(STRFTIME('%s', %s) AS INTEGER)" % (
                 self.extract_map[extract.field], self.process(extract.expr, **kw))
         except KeyError:
-            raise exc.ArgumentError(
+            raise exc.CompileError(
                 "%s is not a valid extract argument." % extract.field)
 
     def limit_clause(self, select):
@@ -434,18 +474,20 @@ class SQLiteIdentifierPreparer(compiler.IdentifierPreparer):
         return result
 
 class SQLiteExecutionContext(default.DefaultExecutionContext):
-    def get_result_proxy(self):
-        rp = base.ResultProxy(self)
-        if rp._metadata:
-            # adjust for dotted column names.  SQLite
-            # in the case of UNION may store col names as 
-            # "tablename.colname"
-            # in cursor.description
-            for colname in rp._metadata.keys:
-                if "." in colname:
-                    trunc_col = colname.split(".")[1]
-                    rp._metadata._set_keymap_synonym(trunc_col, colname)
-        return rp
+    @util.memoized_property
+    def _preserve_raw_colnames(self):
+        return self.execution_options.get("sqlite_raw_colnames", False)
+
+    def _translate_colname(self, colname):
+        # adjust for dotted column names.  SQLite
+        # in the case of UNION may store col names as 
+        # "tablename.colname"
+        # in cursor.description
+        if not self._preserve_raw_colnames  and "." in colname:
+            return colname.split(".")[1], colname
+        else:
+            return colname, None
+
 
 class SQLiteDialect(default.DefaultDialect):
     name = 'sqlite'
@@ -457,6 +499,7 @@ class SQLiteDialect(default.DefaultDialect):
     supports_cast = True
 
     default_paramstyle = 'qmark'
+    execution_ctx_cls = SQLiteExecutionContext
     statement_compiler = SQLiteCompiler
     ddl_compiler = SQLiteDDLCompiler
     type_compiler = SQLiteTypeCompiler
@@ -464,7 +507,6 @@ class SQLiteDialect(default.DefaultDialect):
     ischema_names = ischema_names
     colspecs = colspecs
     isolation_level = None
-    execution_ctx_cls = SQLiteExecutionContext
 
     supports_cast = True
     supports_default_values = True
@@ -548,7 +590,6 @@ class SQLiteDialect(default.DefaultDialect):
                      "WHERE type='table' ORDER BY name")
                 rs = connection.execute(s)
             except exc.DBAPIError:
-                raise
                 s = ("SELECT name FROM sqlite_master "
                      "WHERE type='table' ORDER BY name")
                 rs = connection.execute(s)
@@ -588,7 +629,6 @@ class SQLiteDialect(default.DefaultDialect):
                      "WHERE type='view' ORDER BY name")
                 rs = connection.execute(s)
             except exc.DBAPIError:
-                raise
                 s = ("SELECT name FROM sqlite_master "
                      "WHERE type='view' ORDER BY name")
                 rs = connection.execute(s)
@@ -613,7 +653,6 @@ class SQLiteDialect(default.DefaultDialect):
                      "AND type='view'") % view_name
                 rs = connection.execute(s)
             except exc.DBAPIError:
-                raise
                 s = ("SELECT sql FROM sqlite_master WHERE name = '%s' "
                      "AND type='view'") % view_name
                 rs = connection.execute(s)
@@ -694,7 +733,7 @@ class SQLiteDialect(default.DefaultDialect):
             row = c.fetchone()
             if row is None:
                 break
-            (constraint_name, rtbl, lcol, rcol) = (row[0], row[2], row[3], row[4])
+            (numerical_id, rtbl, lcol, rcol) = (row[0], row[2], row[3], row[4])
             # sqlite won't return rcol if the table
             # was created with REFERENCES <tablename>, no col
             if rcol is None:
@@ -703,17 +742,17 @@ class SQLiteDialect(default.DefaultDialect):
             lcol = re.sub(r'^\"|\"$', '', lcol)
             rcol = re.sub(r'^\"|\"$', '', rcol)
             try:
-                fk = fks[constraint_name]
+                fk = fks[numerical_id]
             except KeyError:
                 fk = {
-                    'name' : constraint_name,
+                    'name' : None,
                     'constrained_columns' : [],
                     'referred_schema' : None,
                     'referred_table' : rtbl,
                     'referred_columns' : []
                 }
                 fkeys.append(fk)
-                fks[constraint_name] = fk
+                fks[numerical_id] = fk
 
             # look up the table based on the given table's engine, not 'self',
             # since it could be a ProxyEngine

@@ -1,10 +1,19 @@
 # ext/sqlsoup.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
 
 """
+
+.. versionchanged:: 0.8
+    SQLSoup is now its own project.  Documentation
+    and project status are available at:
+    http://pypi.python.org/pypi/sqlsoup and
+    http://readthedocs.org/docs/sqlsoup\ .
+    SQLSoup will no longer be included with SQLAlchemy.
+
+
 Introduction
 ============
 
@@ -152,7 +161,7 @@ construction rules apply here as to the select methods::
 You can similarly update multiple rows at once. This will change the
 book_id to 1 in all loans whose book_id is 2::
 
-    >>> db.loans.update(db.loans.book_id==2, book_id=1)
+    >>> db.loans.filter_by(db.loans.book_id==2).update({'book_id':1})
     >>> db.loans.filter_by(book_id=1).all()
     [MappedLoans(book_id=1,user_name=u'Joe Student',
         loan_date=datetime.datetime(2006, 7, 12, 0, 0))]
@@ -242,11 +251,13 @@ accepts in normal mapper definition:
 Advanced Use
 ============
 
-Sessions, Transations and Application Integration
--------------------------------------------------
+Sessions, Transactions and Application Integration
+---------------------------------------------------
 
-**Note:** please read and understand this section thoroughly
-before using SqlSoup in any web application.
+.. note::
+
+   Please read and understand this section thoroughly
+   before using SqlSoup in any web application.
 
 SqlSoup uses a ScopedSession to provide thread-local sessions.
 You can get a reference to the current one like this::
@@ -583,7 +594,7 @@ class SqlSoup(object):
         self.session.flush()
 
     def rollback(self):
-        """Rollback the current transction.
+        """Rollback the current transaction.
 
         See :meth:`.Session.rollback`.
 
@@ -626,7 +637,7 @@ class SqlSoup(object):
         This is the "master" method that can be used to create any 
         configuration.
 
-        (new in 0.6.6)
+        .. versionadded:: 0.6.6
 
         :param attrname: String attribute name which will be
           established as an attribute on this :class:.`.SqlSoup`
@@ -707,8 +718,9 @@ class SqlSoup(object):
     def map(self, selectable, base=None, **mapper_args):
         """Map a selectable directly.
 
-        The class and its mapping are not cached and will
-        be discarded once dereferenced (as of 0.6.6).
+        .. versionchanged:: 0.6.6
+            The class and its mapping are not cached and will
+            be discarded once dereferenced.
 
         :param selectable: an :func:`.expression.select` construct.
         :param base: a Python class which will be used as the
@@ -733,8 +745,9 @@ class SqlSoup(object):
         """Map a selectable directly, wrapping the 
         selectable in a subquery with labels.
 
-        The class and its mapping are not cached and will
-        be discarded once dereferenced (as of 0.6.6).
+        .. versionchanged:: 0.6.6
+            The class and its mapping are not cached and will
+            be discarded once dereferenced.
 
         :param selectable: an :func:`.expression.select` construct.
         :param base: a Python class which will be used as the
@@ -757,8 +770,9 @@ class SqlSoup(object):
                 base=None, **mapper_args):
         """Create an :func:`.expression.join` and map to it.
 
-        The class and its mapping are not cached and will
-        be discarded once dereferenced (as of 0.6.6).
+        .. versionchanged:: 0.6.6
+            The class and its mapping are not cached and will
+            be discarded once dereferenced.
 
         :param left: a mapped class or table object.
         :param right: a mapped class or table object.

@@ -1,5 +1,5 @@
 # firebird/base.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -198,7 +198,7 @@ class FBTypeCompiler(compiler.GenericTypeCompiler):
 
 
 class FBCompiler(sql.compiler.SQLCompiler):
-    """Firebird specific idiosincrasies"""
+    """Firebird specific idiosyncrasies"""
 
     def visit_mod(self, binary, **kw):
         # Firebird lacks a builtin modulo operator, but there is
@@ -215,7 +215,7 @@ class FBCompiler(sql.compiler.SQLCompiler):
             # Override to not use the AS keyword which FB 1.5 does not like
             if asfrom:
                 alias_name = isinstance(alias.name,
-                                expression._generated_label) and \
+                                expression._truncated_label) and \
                                 self._truncated_identifier("alias",
                                 alias.name) or alias.name
 
@@ -293,7 +293,7 @@ class FBCompiler(sql.compiler.SQLCompiler):
 
 
 class FBDDLCompiler(sql.compiler.DDLCompiler):
-    """Firebird syntactic idiosincrasies"""
+    """Firebird syntactic idiosyncrasies"""
 
     def visit_create_sequence(self, create):
         """Generate a ``CREATE GENERATOR`` statement for the sequence."""

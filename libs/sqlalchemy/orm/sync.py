@@ -1,11 +1,12 @@
 # orm/sync.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
 
 """private module containing functions used for copying data 
 between instances based on join conditions.
+
 """
 
 from sqlalchemy.orm import exc, util as mapperutil, attributes

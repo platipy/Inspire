@@ -1,5 +1,5 @@
 # mssql/mxodbc.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -47,7 +47,7 @@ This behavior can be controlled via
 :meth:`~sqlalchemy.sql.expression.Executable.execution_options` using the
 ``native_odbc_execute`` flag with a value of ``True`` or ``False``, where a
 value of ``True`` will unconditionally use native bind parameters and a value
-of ``False`` will uncondtionally use string-escaped parameters.
+of ``False`` will unconditionally use string-escaped parameters.
 
 """
 

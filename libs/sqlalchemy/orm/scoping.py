@@ -1,5 +1,5 @@
 # orm/scoping.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -41,8 +41,9 @@ class ScopedSession(object):
             scope = kwargs.pop('scope', False)
             if scope is not None:
                 if self.registry.has():
-                    raise sa_exc.InvalidRequestError("Scoped session is already present; "
-                                                    "no new arguments may be specified.")
+                    raise sa_exc.InvalidRequestError(
+                            "Scoped session is already present; "
+                            "no new arguments may be specified.")
                 else:
                     sess = self.session_factory(**kwargs)
                     self.registry.set(sess)
@@ -70,8 +71,8 @@ class ScopedSession(object):
         self.session_factory.configure(**kwargs)
 
     def query_property(self, query_cls=None):
-        """return a class property which produces a `Query` object against the
-        class when called.
+        """return a class property which produces a `Query` object 
+        against the class when called.
 
         e.g.::
 
@@ -121,7 +122,8 @@ def makeprop(name):
     def get(self):
         return getattr(self.registry(), name)
     return property(get, set)
-for prop in ('bind', 'dirty', 'deleted', 'new', 'identity_map', 'is_active', 'autoflush'):
+for prop in ('bind', 'dirty', 'deleted', 'new', 'identity_map', 
+                'is_active', 'autoflush', 'no_autoflush'):
     setattr(ScopedSession, prop, makeprop(prop))
 
 def clslevel(name):

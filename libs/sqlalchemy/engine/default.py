@@ -1,5 +1,5 @@
 # engine/default.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -43,6 +43,7 @@ class DefaultDialect(base.Dialect):
     preexecute_autoincrement_sequences = False
     postfetch_lastrowid = True
     implicit_returning = False
+
 
     supports_native_enum = False
     supports_native_boolean = False
@@ -209,29 +210,34 @@ class DefaultDialect(base.Dialect):
         # end Py2K
         # Py3K
         #cast_to = str
-        def check_unicode(type_):
+        def check_unicode(formatstr, type_):
             cursor = connection.connection.cursor()
             try:
-                cursor.execute(
-                    cast_to(
-                        expression.select( 
-                        [expression.cast(
-                            expression.literal_column(
-                                    "'test unicode returns'"), type_)
-                        ]).compile(dialect=self)
+                try:
+                    cursor.execute(
+                        cast_to(
+                            expression.select( 
+                            [expression.cast(
+                                expression.literal_column(
+                                        "'test %s returns'" % formatstr), type_)
+                            ]).compile(dialect=self)
+                        )
                     )
-                )
-                row = cursor.fetchone()
+                    row = cursor.fetchone()
 
-                return isinstance(row[0], unicode)
+                    return isinstance(row[0], unicode)
+                except self.dbapi.Error, de:
+                    util.warn("Exception attempting to "
+                            "detect unicode returns: %r" % de)
+                    return False
             finally:
                 cursor.close()
 
         # detect plain VARCHAR
-        unicode_for_varchar = check_unicode(sqltypes.VARCHAR(60))
+        unicode_for_varchar = check_unicode("plain", sqltypes.VARCHAR(60))
 
         # detect if there's an NVARCHAR type with different behavior available
-        unicode_for_unicode = check_unicode(sqltypes.Unicode(60))
+        unicode_for_unicode = check_unicode("unicode", sqltypes.Unicode(60))
 
         if unicode_for_unicode and not unicode_for_varchar:
             return "conditional"
@@ -249,12 +255,12 @@ class DefaultDialect(base.Dialect):
         """
         return sqltypes.adapt_type(typeobj, self.colspecs)
 
-    def reflecttable(self, connection, table, include_columns):
+    def reflecttable(self, connection, table, include_columns, exclude_columns=None):
         insp = reflection.Inspector.from_engine(connection)
-        return insp.reflecttable(table, include_columns)
+        return insp.reflecttable(table, include_columns, exclude_columns)
 
     def get_pk_constraint(self, conn, table_name, schema=None, **kw):
-        """Compatiblity method, adapts the result of get_primary_keys()
+        """Compatibility method, adapts the result of get_primary_keys()
         for those dialects which don't implement get_pk_constraint().
 
         """
@@ -324,11 +330,14 @@ class DefaultDialect(base.Dialect):
     def do_execute(self, cursor, statement, parameters, context=None):
         cursor.execute(statement, parameters)
 
+    def do_execute_no_params(self, cursor, statement, context=None):
+        cursor.execute(statement)
+
     def is_disconnect(self, e, connection, cursor):
         return False
 
     def reset_isolation_level(self, dbapi_conn):
-        # default_isolation_level is read from the first conenction 
+        # default_isolation_level is read from the first connection 
         # after the initial set of 'isolation_level', if any, so is 
         # the configured default of this dialect.
         self.set_isolation_level(dbapi_conn, self.default_isolation_level)
@@ -342,8 +351,14 @@ class DefaultExecutionContext(base.ExecutionContext):
     result_map = None
     compiled = None
     statement = None
+    postfetch_cols = None
+    prefetch_cols = None
     _is_implicit_returning = False
     _is_explicit_returning = False
+
+    # a hook for SQLite's translation of 
+    # result column names
+    _translate_colname = None
 
     @classmethod
     def _init_ddl(cls, dialect, connection, dbapi_connection, compiled_ddl):
@@ -526,6 +541,10 @@ class DefaultExecutionContext(base.ExecutionContext):
         self.execution_options = connection._execution_options
         self.cursor = self.create_cursor()
         return self
+
+    @util.memoized_property
+    def no_parameters(self):
+        return self.execution_options.get("no_parameters", False)
 
     @util.memoized_property
     def is_crud(self):

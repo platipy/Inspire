@@ -1,5 +1,5 @@
 # oracle/cx_oracle.py
-# Copyright (C) 2005-2011 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2012 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -50,6 +50,8 @@ Unicode
 cx_oracle 5 fully supports Python unicode objects.   SQLAlchemy will pass
 all unicode strings directly to cx_oracle, and additionally uses an output
 handler so that all string based result values are returned as unicode as well.
+Generally, the ``NLS_LANG`` environment variable determines the nature
+of the encoding to be used.
 
 Note that this behavior is disabled when Oracle 8 is detected, as it has been 
 observed that issues remain when passing Python unicodes to cx_oracle with Oracle 8.
@@ -75,7 +77,7 @@ with this feature but it should be regarded as experimental.
 Precision Numerics
 ------------------
 
-The SQLAlchemy dialect goes thorugh a lot of steps to ensure
+The SQLAlchemy dialect goes through a lot of steps to ensure
 that decimal numbers are sent and received with full accuracy.
 An "outputtypehandler" callable is associated with each
 cx_oracle connection object which detects numeric types and
@@ -86,6 +88,22 @@ receives them as string values, instead of receiving a Python
 this behavior, and will coerce the ``Decimal`` to ``float`` if
 the ``asdecimal`` flag is ``False`` (default on :class:`.Float`,
 optional on :class:`.Numeric`).
+
+Because the handler coerces to ``Decimal`` in all cases first,
+the feature can detract significantly from performance.
+If precision numerics aren't required, the decimal handling
+can be disabled by passing the flag ``coerce_to_decimal=False``
+to :func:`.create_engine`::
+
+    engine = create_engine("oracle+cx_oracle://dsn", 
+                        coerce_to_decimal=False)
+
+.. versionadded:: 0.7.6
+    Add the ``coerce_to_decimal`` flag.
+
+Another alternative to performance is to use the 
+`cdecimal <http://pypi.python.org/pypi/cdecimal/>`_ library; 
+see :class:`.Numeric` for additional notes.
 
 The handler attempts to use the "precision" and "scale"
 attributes of the result set column to best determine if
@@ -111,10 +129,13 @@ environment variable. Upon first connection, the dialect runs a
 test to determine the current "decimal" character, which can be
 a comma "," for european locales. From that point forward the
 outputtypehandler uses that character to represent a decimal
-point (this behavior is new in version 0.6.6). Note that
-cx_oracle 5.0.3 or greater is required when dealing with
-numerics with locale settings that don't use a period "." as the
-decimal character.
+point. Note that cx_oracle 5.0.3 or greater is required
+when dealing with numerics with locale settings that don't use
+a period "." as the decimal character.
+
+.. versionchanged:: 0.6.6
+    The outputtypehandler uses a comma "," character to represent
+    a decimal point.
 
 .. _OCI: http://www.oracle.com/technetwork/database/features/oci/index.html
 
@@ -466,6 +487,7 @@ class OracleDialect_cx_oracle(OracleDialect):
                 auto_convert_lobs=True, 
                 threaded=True, 
                 allow_twophase=True, 
+                coerce_to_decimal=True,
                 arraysize=50, **kwargs):
         OracleDialect.__init__(self, **kwargs)
         self.threaded = threaded
@@ -489,7 +511,12 @@ class OracleDialect_cx_oracle(OracleDialect):
         self._cx_oracle_unicode_types = types("UNICODE", "NCLOB")
         self._cx_oracle_binary_types = types("BFILE", "CLOB", "NCLOB", "BLOB") 
         self.supports_unicode_binds = self.cx_oracle_ver >= (5, 0)
-        self.supports_native_decimal = self.cx_oracle_ver >= (5, 0)
+
+        self.supports_native_decimal = (
+                                        self.cx_oracle_ver >= (5, 0) and 
+                                        coerce_to_decimal
+                                    )
+
         self._cx_oracle_native_nvarchar = self.cx_oracle_ver >= (5, 0)
 
         if self.cx_oracle_ver is None:
@@ -601,7 +628,9 @@ class OracleDialect_cx_oracle(OracleDialect):
                                     size, precision, scale):
             # convert all NUMBER with precision + positive scale to Decimal
             # this almost allows "native decimal" mode.
-            if defaultType == cx_Oracle.NUMBER and precision and scale > 0:
+            if self.supports_native_decimal and \
+                    defaultType == cx_Oracle.NUMBER and \
+                    precision and scale > 0:
                 return cursor.var(
                             cx_Oracle.STRING, 
                             255, 
@@ -612,7 +641,8 @@ class OracleDialect_cx_oracle(OracleDialect):
             # make a decision based on each value received - the type 
             # may change from row to row (!).   This kills
             # off "native decimal" mode, handlers still needed.
-            elif defaultType == cx_Oracle.NUMBER \
+            elif self.supports_native_decimal and \
+                    defaultType == cx_Oracle.NUMBER \
                     and not precision and scale <= 0:
                 return cursor.var(
                             cx_Oracle.STRING, 
@@ -693,8 +723,10 @@ class OracleDialect_cx_oracle(OracleDialect):
             # ORA-00028: your session has been killed
             # ORA-03114: not connected to ORACLE
             # ORA-03113: end-of-file on communication channel
+            # ORA-03135: connection lost contact
             # ORA-01033: ORACLE initialization or shutdown in progress
-            return error.code in (28, 3114, 3113, 1033)
+            # TODO: Others ?
+            return error.code in (28, 3114, 3113, 3135, 1033)
         else:
             return False
 
