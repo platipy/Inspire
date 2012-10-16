@@ -1,0 +1,91 @@
+{% set menu = [
+	('index', 'Inspire Home')
+			  ] %}
+{% if g.user %}
+	{% do menu.append(('logout', 'Logout ' + g.user.name)) %}
+{% else %}
+	{% do menu.append(('login', 'Login')) %}
+{% endif %}
+{% set active_page = active_page|default('index') %}
+<html>
+<head>
+    <meta http-equiv="content-type" content="text/html; charset=utf-8" />
+	<link rel=stylesheet type=text/css href="{{ url_for('static', filename='capiscum.css') }}">
+    <link rel=stylesheet type=text/css href="{{ url_for('static', filename='jquery.fancybox.css') }}">
+    <link rel="shortcut icon" href="{{ url_for('static', filename='favicon.ico') }}">
+	<script type="text/javascript" src="{{ url_for('static', filename='jquery.js') }}"></script>
+	<title>{% block title %}{% endblock %} - Inspire</title>
+	{% block head %}{% endblock %}
+</head>
+<body>
+
+<div id="logo">
+    <h1><a href="index.php">Inspire</a></h1>
+    <h2><a href="index.php">at Chester Community Charter School</a></h2>
+</div>
+
+
+<div id="content">
+    <div id="sidebar">
+        <div id="login" class="boxed">
+			  <h2 class="title">Login</h2>
+			  <div class="content">
+				<form id="login" method="post" action="{{ url_for('login') }}">
+				  <fieldset>
+				  <legend>Sign-In</legend>
+				  <label for="inputtext1">User name:</label>
+				  <input id="inputtext1" type="text" name="user" value="" /><? echo EMAIL_DOMAIN;?>
+				  <label for="inputtext2">Password:</label>
+				  <input id="inputtext2" type="password" name="pass" value="" />
+				  <input id="inputsubmit1" type="submit" name="submit" value="Sign In" /> or <a href="register.php">Register</a>
+				  <input type="hidden" name="sublogin" value="1">
+				  <p>Remember me? <input type="checkbox" name="remember" <? if($form->value("remember") != ""){ echo "checked"; } ?>><br>
+				  <a href="forgot.php">Forgot your password?</a></p>
+				  </fieldset>
+				</form>
+			  </div>
+			</div>
+        <div id="updates" class="boxed">
+          <h2 class="title">Recent Updates</h2>
+          <div class="content">
+            <ul>
+              <li>
+                <h3>August 15, 2012</h3>
+                <p>Site launched!</p>
+              </li>
+            </ul>
+          </div>
+        </div>
+            
+        <div id="tabs">
+    {% for page, title in menu %}
+        <a href="{{ url_for(page) }}" 
+           {% if page == active_page %}class="active"{% endif %} 
+          >{{ title }}</a>
+        {% endfor %}
+</div>
+    </div>
+</div>
+
+<div id="container">
+
+	<div id="page">
+		{#{% for message in get_flashed_messages() %}
+		<div class="message">
+			{{ message }}
+		</div>
+		{% endfor %}#}
+		<div id="body">
+			{% block body %}{% endblock %}
+		</div>
+		<div>
+			<ul class="menu">
+				<li>Inspire</li>
+			</ul>
+		<div>
+	</ul>
+			
+</div>
+
+</body>
+</html>

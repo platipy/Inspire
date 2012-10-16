@@ -1,7 +1,7 @@
 # Low Level imports
 from optparse import OptionParser
 
-from webinacan import app
+from inspire import app
 
 parser = OptionParser()
 parser.add_option("-s", "--server", dest="local", default=True,

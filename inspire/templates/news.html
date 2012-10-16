@@ -1,0 +1,13 @@
+{% extends "_base.html" %}
+{% block title %}Index Page{% endblock %}
+
+{% block body %}
+	<div align="center">
+    <h3>Inspire Home Page</h3>
+	</div>
+    {% if g.user %}
+    Hi, I know you.
+	{% else %}
+    Who the hell do you think I am????
+    {% endif %}
+{% endblock %}
