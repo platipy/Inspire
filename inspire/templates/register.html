@@ -1,25 +1,19 @@
-{% set active_page = 'register' %}
 {% extends "_base.html" %}
-{% block head %}
-{% endblock %}
-{% block title %}Register Account{% endblock %}
-{% block body %}
-	{% if error %}
+{% from "_util.html" import render_field %}
+{% block title %}Register{% endblock %}
+
+{% block content %}
+<div>    
+    <h2>Register</h2>
+    {% if error %}
 		{{ error }}
 	{% endif %}
-	<form method="POST" action="{{ url_for('register') }}">
-        Register as {{ registration_type }}<br>
-		<label for="email">Email:</label>
-        <input id="email" type="text" name="email" value="" /><br>
-        
-        <label for="name">Visible Name:</label>
-        <input id="name" type="text" name="name" value="" /><br>
-        
-        <label for="password">Password:</label>
-        <input id="password" type="password" name="password" value="" /><br>
-        
-        <input id='type' type='hidden' name='type' value="{{ registration_type }}" />
-        
-        <input id="submit" type="submit" name="submit" value="Register" />
-	</form>
+    <form action="{{ url_for('register') }}" method="POST">
+        {{ form.hidden_tag() }}
+        Email: {{ form.email() }}<br>
+        Password: {{ form.password() }}<br>
+        Name: {{ form.name() }}<br>
+        <input type="submit" value="Register">
+    </form>
+</div>
 {% endblock %}

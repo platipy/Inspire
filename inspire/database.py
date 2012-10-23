@@ -3,32 +3,53 @@ from inspire import db, config
 import sqlalchemy
 from flask.ext.sqlalchemy import SQLAlchemy
 from sqlalchemy.sql.expression import asc
-from datetime import datetime
+import passlib.hash
+from inspire.lib.history_meta import Versioned
 
-#class Module(db.Model):
-#    __tablename__ = 'modules'
-    
-    
-class User(db.Model):
-    __tablename__ = 'users'
-    uid = db.Column(db.Integer, primary_key = True, nullable = False, autoincrement= True)
-    name = db.Column(db.String(30), unique = True, nullable = False)    
-    email = db.Column(db.String(30), unique = True)
-    password = db.Column(db.String(30), unique = False, nullable = False)    
-    type = db.Column(db.Enum("student","teacher","developer","guest", name="user_types"), nullable = False)
-    
-    def __init__(self, email, name, password, type):
-        self.email = email
-        self.name = name
-        self.password = password
-        self.type = type
+
+class User(Versioned, db.Model):
+    user_types = ["guest","student","teacher","developer","admin"]
+    GUEST, STUDENT, TEACHER, DEVELOPER, ADMIN = xrange(5)
+
+    @property
+    def password(self):
+        raise Exception("Plaintext passwords are not stored!")
         
-    def __repr__(self):
-        return '<User %s>' % self.email
+    @password.setter
+    def password(self, value):
+        # TODO: Verify password strength somewhere
+        self.pwhash = passlib.hash.sha512_crypt.encrypt(value)
         
     def verify_password(self, password):
-        return self.password == password
+        return passlib.hash.sha512_crypt.verify(password, self.pwhash)
         
+    # Required information
+    id = db.Column(db.Integer, primary_key = True)
+    email = db.Column(db.String(40), unique = True, nullable = False)
+    pwhash = db.Column(db.String(119), unique = False, nullable = False)
+    name = db.Column(db.String(256), unique = True, nullable = False)
+    user_type = db.Column(db.Integer)
+
+    def __repr__(self):
+        return '<User %s (%s)>' % (self.email, self.name)
         
-user = User("acbart@udel.edu", "Mr. Bart", "password", "developer")
-print str(user)
+# class Prompt(Versioned, db.Model):
+    # id = db.Column(db.Integer, primary_key = True)
+    # prompt = db.Column(db.Text, nullable = False)
+    # author_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    # author = db.relationship('User', backref=db.backref('user', lazy='joined'))
+    
+    # def __repr__(self):
+        # return '<Prompt %d>' % self.id
+    
+    
+# class Response(Versioned, db.Model):
+    # id = db.Column(db.Integer, primary_key = True)
+    # text = db.Column(db.Text)
+    # prompt_id = db.Column(db.Integer, db.ForeignKey('prompt.id'))
+    # author_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    # prompt = db.relationship('Prompt')
+    # author = db.relationship('User')
+    
+    # def __repr__(self):
+        # return '<Response %d>' % self.id

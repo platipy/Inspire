@@ -1,28 +1,18 @@
 {% extends "_base.html" %}
-{% block head %}
-	{{ super() }}
-{% endblock %}
+{% from "_util.html" import render_field %}
 {% block title %}Login{% endblock %}
-	<div align="center">
-    <h3>Inspire Log-In</h3>
-	</div>
-{% block body %}
-	{% if error %}
+
+{% block content %}
+<div>    
+    <h2>Login</h2>
+    {% if error %}
 		{{ error }}
 	{% endif %}
-	<form method="POST" action=".">
-		<fieldset>
-			<legend>Login</legend>
-                <label for="email">Email:</label>
-                <input id="email" type="text" name="email" value="" /><br>
-                
-                <label for="password">Password:</label>
-                <input id="password" type="password" name="password" value="" /><br>
-                
-                <input id="submit" type="submit" name="submit" value="Sign In" /> or <a href="{{ url_for('register') }}">Register</a><br>
-                
-                <a href="{{ url_for('reset_password') }}">Forgot your password?</a>
-			<input type="submit" value="Login">
-		</fieldset>
-	</form>
+    <form action="/login/" method="POST">
+        {{ g.forms['login'].hidden_tag() }}
+        Email: {{ g.forms['login'].email() }}<br>
+        Password: {{ g.forms['login'].password() }}<br>
+        <input type="submit" value="Login">
+    </form>
+</div>
 {% endblock %}

@@ -1,13 +1,27 @@
 {% extends "_base.html" %}
-{% block title %}Index Page{% endblock %}
+{% from "_util.html" import render_field %}
+{% block title %}Home{% endblock %}
 
-{% block body %}
-	<div align="center">
-    <h3>Inspire Home Page</h3>
-	</div>
-    {% if g.user %}
-    Hi, I know you.
-	{% else %}
-    Who the hell do you think I am????
+{% block content %}
+<div>
+
+    <h2>Welcome</h2>
+    <div>
+        To begin using a game, use the bar on the right.
+    </div><br><br>
+    
+    {% if not g.user %}
+    <h2>Login</h2>
+    {% if error %}
+		{{ error }}
+	{% endif %}
+    <form action="{{ url_for('login') }}" method="POST">
+        {{ form.hidden_tag() }}
+        Email: {{ form.email() }}<br>
+        Password: {{ form.password() }}<br>
+        <input type="submit" value="Login">
+    </form>
     {% endif %}
+
+</div>
 {% endblock %}

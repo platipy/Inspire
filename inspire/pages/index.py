@@ -1,10 +1,12 @@
-from inspire import app, g
+from inspire import app
+from inspire.database import *
 
-from flask import Flask, request, session, g, redirect, url_for, \
-     abort, render_template, flash
+from flask import Flask, request, flash, redirect, url_for, render_template, g
+from flask import session
+from forms.login import LoginForm
 
 @app.route('/')
+@app.login_required
+@app.global_data
 def index():
-    #print url_for("index")
     return render_template('index.html')
-    
