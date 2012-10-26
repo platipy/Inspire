@@ -1,10 +1,11 @@
+import traceback
+
 from flask import Flask
 from flask.ext.sqlalchemy import SQLAlchemy
 from optparse import OptionParser
 import sys
 import config
 import unittest
-import dataset
 #from inspire.lib.history_meta import versioned_session
 
 try:
@@ -31,14 +32,20 @@ def main():
         #versioned_session(db.session)
         import database
         import web
+        import module_loader
         if options.reset_db:
             db.drop_all()
             db.create_all()
-            dataset.populate()
+            database.populate()
+            for module in app.activity_modules:
+                try:
+                    module.populate_tables()
+                    print "Loaded database for %s." % (module.public_name,)
+                except:
+                    traceback.print_exc()
             print 'Database reset.'
             #exit(0)
         import pages
-        import module_loader
         app.run(host='0.0.0.0', port=config.dev_port, use_reloader=True)
     else:
         parser.print_help()

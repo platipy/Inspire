@@ -1,9 +1,13 @@
 from inspire import app
-from flask import session, flash, redirect, url_for
+from inspire.database import User
+from flask import Flask, request, flash, redirect, url_for, render_template, g
+from flask import session
 
-@app.route('/logout')
-@app.route('/logout/')
+@app.route("/logout", methods=['GET', 'POST'])
+@app.route("/logout/", methods=['GET', 'POST'])
+@app.global_data
 def logout():
-    session.pop('username', None)
-    flash("You have been logged out.")
-    return redirect(url_for('index'))
+    g.user = None
+    session.pop('uid', None)
+    flash("You were logged out")
+    return redirect(url_for('login'))

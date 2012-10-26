@@ -15,8 +15,12 @@ for d in module_directories:
     if os.path.isdir(s) and os.path.exists(s + os.sep + "__init__.py"):
         try:
             module = __import__("inspire.modules."+d, fromlist = ["*"])
-            modules.append(module)
-            print "Loaded %s" % d
+            if hasattr(module, 'internal_name') and hasattr(module, 'public_name'):
+                module._index_path = module.internal_name + '.index'
+                app.register_blueprint(module.blueprint, 
+                                       url_prefix='/modules/'+module.internal_name)
+                modules.append(module)
+                print "Loaded %s" % d
         except ImportError, e:
             traceback.print_exc()
         except:

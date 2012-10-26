@@ -19,7 +19,8 @@
         {{ form.hidden_tag() }}
         Email: {{ form.email() }}<br>
         Password: {{ form.password() }}<br>
-        <input type="submit" value="Login">
+        <input type="submit" value="Login"><br>
+        If you are new, make sure to <a href='{{ url_for("register") }}'>register</a> first.
     </form>
     {% endif %}
 

@@ -12,8 +12,8 @@
 <body>
 
 <div id="logo">
-  <h1><a href="index.html">XO Teacher Portal</a></h1>
-  <h2><a href="index.html">for Chester Community Charter School</a></h2>
+  <h1><a href="{{ url_for('index') }}">XO Teacher Portal</a></h1>
+  <h2><a href="{{ url_for('index') }}">for Chester Community Charter School</a></h2>
 </div>
 <div id="tabs"></div>
 <div id="content">
@@ -29,9 +29,10 @@
         </div>
     </div>
     <div class="boxed">
+        <h2>Modules</h2>
         <ol>
             {% for module in g.modules %}
-            <li><a href='{{ module.internal_name }}'>{{ module.name }}</a></li>
+            <li><a href='{{ url_for(module._index_path) }}'>{{ module.public_name }}</a></li>
             {% endfor %}
         </ol>
     </div>

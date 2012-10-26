@@ -1,5 +1,5 @@
 # This file really needs a better name. We'll discuss later
-from inspire import db, config
+from inspire import db
 import sqlalchemy
 from flask.ext.sqlalchemy import SQLAlchemy
 from sqlalchemy.sql.expression import asc
@@ -32,6 +32,17 @@ class User(Versioned, db.Model):
 
     def __repr__(self):
         return '<User %s (%s)>' % (self.email, self.name)
+        
+def populate():
+    u = User(email='acbart', password='pass', name='Austin Cory Bart', user_type=User.ADMIN)
+    db.session.add(u)
+    u = User(email='lelouch', password='pass', name='Lelouch Lamperouge', user_type=User.STUDENT)
+    db.session.add(u)
+    u = User(email='cookies', password='pass', name='Mr. Monster', user_type=User.TEACHER)
+    db.session.add(u)
+    u = User(email='trex', password='pass', name='Rebecca Trexler', user_type=User.DEVELOPER)
+    db.session.add(u)
+    db.session.commit()
         
 # class Prompt(Versioned, db.Model):
     # id = db.Column(db.Integer, primary_key = True)

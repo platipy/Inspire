@@ -6,6 +6,10 @@ from flask import session
 from forms.login import LoginForm
 
 @app.route('/')
+@app.route('/index')
+@app.route('/index/')
+@app.route('/modules')
+@app.route('/modules/')
 @app.login_required
 @app.global_data
 def index():
