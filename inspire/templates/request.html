@@ -1,0 +1,18 @@
+{% extends "_base.html" %}
+{% from "_util.html" import render_field %}
+{% block title %}Register{% endblock %}
+
+{% block content %}
+<div>    
+    <h2>Password Reset Requests</h2>
+    {% if error %}
+		{{ error }}
+	{% endif %}
+    <form action="{{ url_for('view_resets') }}" method="POST">
+        {% for form in forms %}
+            {{ form[0] }}{{ form[1] }}<br>
+        {% endfor %}
+        <input type="submit" value="Register">
+    </form>
+</div>
+{% endblock %}

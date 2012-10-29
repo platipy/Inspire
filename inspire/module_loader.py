@@ -1,9 +1,11 @@
 import traceback
 
-from inspire import app
+from inspire import app, db
 from flask import Flask, request, flash, redirect, url_for, render_template, g
 from flask import session
 from inspire.database import *
+from inspire.pages.admin import admin
+from flask.ext.admin.contrib.sqlamodel import ModelView
 
 # Try and load all the modules in modules/
 import os
@@ -19,6 +21,10 @@ for d in module_directories:
                 module._index_path = module.internal_name + '.index'
                 app.register_blueprint(module.blueprint, 
                                        url_prefix='/modules/'+module.internal_name)
+                if hasattr(module, 'tables'):
+                    for a_table in module.tables:
+                        print "Loading Model for %s." % d
+                        admin.add_view(ModelView(a_table, db.session, category=d))
                 modules.append(module)
                 print "Loaded %s" % d
         except ImportError, e:

@@ -5,18 +5,21 @@ from flask import request, g
 from flask.ext.admin.contrib.sqlamodel import ModelView
 
 class AdminIndex(AdminIndexView):
-    #@app.setup
+    @app.login_required
+    @app.global_data
     def is_accessible(self):
-        print g.user
-        return g.user is not None and g.user.username == 'admin'
+        return g.user is not None and (g.user.user_type == User.ADMIN or
+                                       g.user.user_type == User.DEVELOPER)
     
-    #@app.setup
+    @app.login_required
+    @app.global_data
     @expose('/')
     def index(self):
         return self.render('admin/index.html')
         
 admin = Admin(app, name='Inspire', index_view = AdminIndex())
 admin.add_view(ModelView(User, db.session))
-admin.add_view(ModelView(User.__history_mapper__.class_, db.session))
+#admin.add_view(ModelView(User.__history_mapper__.class_, db.session))
+#admin.add_view(ModelView(Reset_Requests.bind, db.session))
 #admin.add_view(ModelView(Prompt, db.session))
 #admin.add_view(ModelView(Response, db.session))

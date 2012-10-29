@@ -37,11 +37,3 @@ def rename_dog(id, name):
     db.session.commit()
     return json_success()
     
-@app.conspyre(blueprint)
-def save_progress(level_completion_speed, level_errors, points_gained):
-    pass
-    
-@app.conspyre(blueprint)
-def load_progress():
-    pass
-    

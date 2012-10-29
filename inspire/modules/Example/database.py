@@ -23,6 +23,8 @@ class Points(Versioned, db.Model):
     
     def __repr__(self):
         return '<%s points: %d>' % (self.name, self.value)
+        
+tables = [Dog, Points]
     
 def populate_tables():
     u = User(email='dog_lover', password='pass', name='Kyle', user_type=User.STUDENT)

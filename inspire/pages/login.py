@@ -2,7 +2,7 @@ from inspire import app
 from inspire.database import User
 from flask import Flask, request, flash, redirect, url_for, render_template, g
 from flask import session
-from forms.login import LoginForm
+from forms.user import LoginForm
 
 @app.route("/login", methods=['GET', 'POST'])
 @app.route("/login/", methods=['GET', 'POST'])
