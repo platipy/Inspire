@@ -8,7 +8,8 @@ from inspire.lib.history_meta import Versioned
 
 Reset_Requests = db.Table('Reset_Requests', db.Model.metadata,
     db.Column('student_id', db.Integer, db.ForeignKey('user.id')),
-    db.Column('teacher_id', db.Integer, db.ForeignKey('user.id'))
+    db.Column('teacher_id', db.Integer, db.ForeignKey('user.id')),
+    db.Column('approved', db.Boolean)
 )
 
 class User(Versioned, db.Model):

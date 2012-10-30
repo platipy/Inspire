@@ -1,9 +1,10 @@
 from inspire import app, db
 from inspire.database import User, Reset_Requests
 from flask import Flask, request, flash, redirect, url_for, render_template, g
-from flask import session
+from flask import session, jsonify
 from forms.login import RegisterForm
 from flask.ext.wtf import Form, TextField, HiddenField, validators
+from werkzeug.datastructures import ImmutableMultiDict
 
 @app.route("/request_reset", methods=['GET', 'POST'])
 @app.route("/request_reset/", methods=['GET', 'POST'])
@@ -32,18 +33,30 @@ def request_reset():
             return render_template("register.html", form=form)
     return render_template("register.html", form=form)
     
+@app.route('/_reset_request', methods=['GET', 'POST'])
+@app.route("/_reset_request/", methods=['GET', 'POST'])
+@app.login_required
+@app.global_data
+def _reset_request():
+    id = request.args.get('id', None, type=int)
+    if id is not None:
+        print dir(Reset_Requests)
+        requests = Reset_Requests.select(Reset_Requests.c.student_id==id)
+        for r in db.session.execute(requests).fetchall():
+            r.approved = True
+        db.session.commit()
+        return jsonify(message="Password was reset!")
+    return jsonify(message="Invalid ID given")
+    
 @app.route('/view_resets', methods=['GET', 'POST'])
 @app.route("/view_resets/", methods=['GET', 'POST'])
 @app.login_required
 @app.global_data
 def view_resets():
-    reset_requests = db.session.query(User.id, 
-                                      User.name).filter(User.teacher_requesting.any(id=g.user.id))
-    reset_requests= db.session.execute(reset_requests).fetchall()
-    
-    forms = [(TextField(a_request[1]), HiddenField(a_request[0])) 
-                for a_request in reset_requests]
-    return render_template("request.html", forms=forms)
+    reset_requests = db.session.query(User.id, User.name).filter(User.teacher_requesting.any(id=g.user.id))
+    reset_requests= [{'id' : r[0], 'name' : r[1]} for r in 
+                        db.session.execute(reset_requests).fetchall()]
+    return render_template("request.html", resets=reset_requests)
         
     # form = RegisterForm()
     # if form.is_submitted():

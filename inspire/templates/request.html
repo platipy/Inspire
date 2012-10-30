@@ -1,6 +1,24 @@
 {% extends "_base.html" %}
 {% from "_util.html" import render_field %}
-{% block title %}Register{% endblock %}
+{% block title %}Password Reset Requests{% endblock %}
+
+{% block head %}
+<script type="text/javascript">
+$(function() {
+    $('button.ajax_resets').bind('click', function() {
+        var $this = $(this); // this is clobbered in the callback!
+        $.getJSON($SCRIPT_ROOT + '/_reset_request', {
+            id: $this.attr('id')
+        }, function(data) {
+            if (data.message) {
+                $('#message_'+$this.attr('id')).text(data.message);
+            }
+        });
+        return false;
+    });
+});
+</script>
+{% endblock %}
 
 {% block content %}
 <div>    
@@ -9,10 +27,14 @@
 		{{ error }}
 	{% endif %}
     <form action="{{ url_for('view_resets') }}" method="POST">
-        {% for form in forms %}
-            {{ form[0] }}{{ form[1] }}<br>
+        <table>
+        {% for r in resets %}
+            <tr>
+                <td>{{ r.name }}:</td>
+                <td>&emsp;<button class='btn ajax_resets' id='{{ r.id }}'>Reset</button>&emsp;<span id='message_{{ r.id }}'></span></td>
+            </tr>
         {% endfor %}
-        <input type="submit" value="Register">
+        </table>
     </form>
 </div>
 {% endblock %}
