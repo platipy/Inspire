@@ -6,11 +6,20 @@ from sqlalchemy.sql.expression import asc
 import passlib.hash
 from inspire.lib.history_meta import Versioned
 
-Reset_Requests = db.Table('Reset_Requests', db.Model.metadata,
-    db.Column('student_id', db.Integer, db.ForeignKey('user.id')),
-    db.Column('teacher_id', db.Integer, db.ForeignKey('user.id')),
-    db.Column('approved', db.Boolean)
-)
+# Reset_Requests = db.Table('Reset_Requests', db.Model.metadata,
+    # db.Column('student_id', db.Integer, db.ForeignKey('user.id')),
+    # db.Column('teacher_id', db.Integer, db.ForeignKey('user.id')),
+    # db.Column('approved', db.Boolean)
+# )
+
+from sqlalchemy.ext.declarative import declarative_base
+Base = declarative_base()
+
+class Reset_Requests(db.Model):
+    __tablename__ = 'reset_requests'
+    student_id = db.Column(db.Integer, db.ForeignKey('user.id'), primary_key = True),
+    teacher_id = db.Column(db.Integer, db.ForeignKey('user.id'), primary_key = True),
+    approved = db.Column(db.Boolean)
 
 class User(Versioned, db.Model):
     user_types = ["guest","student","teacher","developer","admin"]
@@ -56,10 +65,13 @@ def populate():
     
     db.session.flush()
     
-    i = Reset_Requests.insert().values(student_id=u2.id, teacher_id=u1.id)
+    u4 = User(email='trex', password='pass', name='Rebecca Trexler', user_type=User.DEVELOPER)
+    Reset_Requests(student_id=u2.id, teacher_id=u1.id, approved=False)
+    
+    i = Reset_Requests.insert().values(student_id=u2.id, teacher_id=u1.id, approved=False)
     db.session.execute(i)
     
-    i = Reset_Requests.insert().values(student_id=u3.id, teacher_id=u1.id)
+    i = Reset_Requests.insert().values(student_id=u3.id, teacher_id=u1.id, approved=True)
     db.session.execute(i)
     
     db.session.commit()
