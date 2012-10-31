@@ -40,10 +40,10 @@ def request_reset():
 def _reset_request():
     id = request.args.get('id', None, type=int)
     if id is not None:
-        print dir(Reset_Requests)
-        requests = Reset_Requests.select(Reset_Requests.c.student_id==id)
-        for r in db.session.execute(requests).fetchall():
-            r.approved = True
+        r = Reset_Requests.query.filter(Reset_Requests.student_id==id).all()
+        for r in r:
+            print r
+            #r.approved = True
         db.session.commit()
         return jsonify(message="Password was reset!")
     return jsonify(message="Invalid ID given")
@@ -53,7 +53,7 @@ def _reset_request():
 @app.login_required
 @app.global_data
 def view_resets():
-    reset_requests = db.session.query(User.id, User.name).filter(User.teacher_requesting.any(id=g.user.id))
+    reset_requests = db.session.query(User.id, User.name).filter(User.teacher_requesting == g.user.id))
     reset_requests= [{'id' : r[0], 'name' : r[1]} for r in 
                         db.session.execute(reset_requests).fetchall()]
     return render_template("request.html", resets=reset_requests)

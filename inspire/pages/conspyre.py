@@ -50,9 +50,10 @@ def _student_request_reset():
     email = request.args['student']
     teacher_id = request.args['teacher']
     student = User.query.filter(User.email == email).first()
-    Reset_Requests.insert().values(student = student, 
-                                   teacher_id = teacher_id, 
-                                   approved=False)
+    r = Reset_Requests(student_requesting = student, 
+                       teacher_id = teacher_id, 
+                       approved=False)
+    db.session.add(r)
     db.session.commit()
     return json_success()
     

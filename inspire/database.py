@@ -6,22 +6,24 @@ from sqlalchemy.sql.expression import asc
 import passlib.hash
 from inspire.lib.history_meta import Versioned
 
-# Reset_Requests = db.Table('Reset_Requests', db.Model.metadata,
-    # db.Column('student_id', db.Integer, db.ForeignKey('user.id')),
-    # db.Column('teacher_id', db.Integer, db.ForeignKey('user.id')),
-    # db.Column('approved', db.Boolean)
-# )
-
-from sqlalchemy.ext.declarative import declarative_base
-Base = declarative_base()
 
 class Reset_Requests(db.Model):
     __tablename__ = 'reset_requests'
-    student_id = db.Column(db.Integer, db.ForeignKey('user.id'), primary_key = True),
-    teacher_id = db.Column(db.Integer, db.ForeignKey('user.id'), primary_key = True),
+    student_id = db.Column(db.Integer, db.ForeignKey('user.id'), primary_key = True)
+    teacher_id = db.Column(db.Integer, db.ForeignKey('user.id'), primary_key = True)
     approved = db.Column(db.Boolean)
+    
+    student = db.relationship("User", 
+                              backref='student_requesting',
+                              primaryjoin="User.id == Reset_Requests.student_id")
+    teacher = db.relationship("User", 
+                              backref='teacher_requesting',
+                              primaryjoin="User.id == Reset_Requests.teacher_id")
+    
+    def __repr__(self):
+        return '<Request from %s to %s>' % (self.student_id, self.teacher_id)
 
-class User(Versioned, db.Model):
+class User(db.Model):
     user_types = ["guest","student","teacher","developer","admin"]
     GUEST, STUDENT, TEACHER, DEVELOPER, ADMIN = xrange(5)
     __tablename__ = 'user'
@@ -44,11 +46,6 @@ class User(Versioned, db.Model):
     pwhash = db.Column(db.String(119), unique = False, nullable = False)
     name = db.Column(db.String(256), unique = False, nullable = False)
     user_type = db.Column(db.Integer)
-    teacher_requesting = db.relationship('User',
-                               secondary= Reset_Requests,
-                               primaryjoin=Reset_Requests.c.student_id==id,
-                               secondaryjoin=Reset_Requests.c.teacher_id==id,
-                               backref = 'student_requesting')
 
     def __repr__(self):
         return '<User %s (%s)>' % (self.email, self.name)
@@ -65,14 +62,11 @@ def populate():
     
     db.session.flush()
     
-    u4 = User(email='trex', password='pass', name='Rebecca Trexler', user_type=User.DEVELOPER)
-    Reset_Requests(student_id=u2.id, teacher_id=u1.id, approved=False)
+    r= Reset_Requests(student_id=u2.id, teacher_id=u1.id, approved=False)
+    db.session.add(u4)
     
-    i = Reset_Requests.insert().values(student_id=u2.id, teacher_id=u1.id, approved=False)
-    db.session.execute(i)
-    
-    i = Reset_Requests.insert().values(student_id=u3.id, teacher_id=u1.id, approved=True)
-    db.session.execute(i)
+    r= Reset_Requests(student_id=u3.id, teacher_id=u1.id, approved=False)
+    db.session.add(u4)
     
     db.session.commit()
         
