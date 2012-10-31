@@ -27,7 +27,10 @@
     <div class= "boxed" style='margin-bottom:20px'>
         <div class="content">
         {% if g.user %}
-        Welcome, {{ g.user.name}} ({{g.user.email }})</a></li>
+        Welcome, {{ g.user.name}} ({{g.user.email }})<br>
+        <a href='{{url_for("logout")}}'>Log out</a><br>
+        <a href='{{url_for("view_resets")}}'>View Password Requests</a><br>
+        
         {% else %}
         You are not currently logged in.
         {% endif %}
@@ -35,11 +38,11 @@
     </div>
     <div class="boxed">
         <h2>Modules</h2>
-        <ol>
+        <ul class="nav nav-list">
             {% for module in g.modules %}
             <li><a href='{{ url_for(module._index_path) }}'>{{ module.public_name }}</a></li>
             {% endfor %}
-        </ol>
+        </ul>
     </div>
   </div>
   
