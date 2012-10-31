@@ -53,7 +53,9 @@ def _reset_request():
 @app.login_required
 @app.global_data
 def view_resets():
-    reset_requests = db.session.query(User.id, User.name).filter(User.teacher_requesting == g.user.id))
+    reset_requests = db.session.query(User.id, User.name).\
+                               join(Reset_Requests).\
+                               filter(Reset_Requests.teacher_id == g.user.id)
     reset_requests= [{'id' : r[0], 'name' : r[1]} for r in 
                         db.session.execute(reset_requests).fetchall()]
     return render_template("request.html", resets=reset_requests)
