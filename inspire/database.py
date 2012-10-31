@@ -13,10 +13,10 @@ class Reset_Requests(db.Model):
     teacher_id = db.Column(db.Integer, db.ForeignKey('user.id'), primary_key = True)
     approved = db.Column(db.Boolean)
     
-    student = db.relationship("User", 
+    students = db.relationship("User", 
                               backref='student_requesting',
                               primaryjoin="User.id == Reset_Requests.student_id")
-    teacher = db.relationship("User", 
+    teachers = db.relationship("User", 
                               backref='teacher_requesting',
                               primaryjoin="User.id == Reset_Requests.teacher_id")
     
@@ -63,10 +63,10 @@ def populate():
     db.session.flush()
     
     r= Reset_Requests(student_id=u2.id, teacher_id=u1.id, approved=False)
-    db.session.add(u4)
+    db.session.add(r)
     
-    r= Reset_Requests(student_id=u3.id, teacher_id=u1.id, approved=False)
-    db.session.add(u4)
+    r= Reset_Requests(student_id=u3.id, teacher_id=u1.id, approved=True)
+    db.session.add(r)
     
     db.session.commit()
         

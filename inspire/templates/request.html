@@ -12,6 +12,9 @@ $(function() {
         }, function(data) {
             if (data.message) {
                 $('#message_'+$this.attr('id')).text(data.message);
+                if (data.success) {
+                    $this.parent().parent().remove()
+                }
             }
         });
         return false;

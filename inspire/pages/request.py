@@ -42,11 +42,10 @@ def _reset_request():
     if id is not None:
         r = Reset_Requests.query.filter(Reset_Requests.student_id==id).all()
         for r in r:
-            print r
-            #r.approved = True
+            r.approved = True
         db.session.commit()
-        return jsonify(message="Password was reset!")
-    return jsonify(message="Invalid ID given")
+        return jsonify(message="Password was reset!", success = True)
+    return jsonify(message="Invalid ID given", success = False)
     
 @app.route('/view_resets', methods=['GET', 'POST'])
 @app.route("/view_resets/", methods=['GET', 'POST'])
@@ -54,10 +53,9 @@ def _reset_request():
 @app.global_data
 def view_resets():
     reset_requests = db.session.query(User.id, User.name).\
-                               join(Reset_Requests).\
-                               filter(Reset_Requests.teacher_id == g.user.id)
-    reset_requests= [{'id' : r[0], 'name' : r[1]} for r in 
-                        db.session.execute(reset_requests).fetchall()]
+                               join(Reset_Requests, Reset_Requests.student_id == User.id).\
+                               filter(Reset_Requests.teacher_id == g.user.id).\
+                               filter(~Reset_Requests.approved).all()
     return render_template("request.html", resets=reset_requests)
         
     # form = RegisterForm()

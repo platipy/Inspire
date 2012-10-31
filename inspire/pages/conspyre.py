@@ -44,18 +44,48 @@ def _student_register():
     db.session.commit()
     return json_success(id = user.id)
     
+@app.route("/conspyre/reset_password")
+@app.route("/conspyre/reset_password/")
+def _student_reset_password():
+    if check_request_arguments('email', 'password'):
+        return json_error(message="You did not specify a username and/or password")
+    email = request.args['email']
+    password = request.args['password']
+    user = User.query.filter(User.email == email).first()
+    if user is None:
+        return json_error(message="User not found")
+    reqs = Reset_Requests.query.filter(Reset_Requests.student_id==user.id).all()
+    if not any(r.approved for r in reqs):
+        return json_error(message="Teacher has not approved your reset yet.")
+    user.password = password
+    db.session.commit()
+    return json_success(name=user.name, id=user.id)
+    
+@app.route('/conspyre/password_resetable')
+@app.route("/conspyre/password_resetable/")
+def _student_password_resetable():
+    email = request.args['student']
+    student = User.query.filter(User.email == email).first()
+    reqs = Reset_Requests.query.filter(Reset_Requests.student_id==student.id).all()
+    if not any(r.approved for r in reqs):
+        return json_error(message="Reset has not been approved yet.", status=False)
+    return json_success(status=True)
+    
 @app.route('/conspyre/request_reset')
 @app.route("/conspyre/request_reset/")
 def _student_request_reset():
     email = request.args['student']
-    teacher_id = request.args['teacher']
+    teacher_email = request.args['teacher']
     student = User.query.filter(User.email == email).first()
-    r = Reset_Requests(student_requesting = student, 
-                       teacher_id = teacher_id, 
-                       approved=False)
-    db.session.add(r)
-    db.session.commit()
-    return json_success()
+    teacher = User.query.filter(User.email == teacher_email).first()
+    if Reset_Requests.query.filter(Reset_Requests.student_id==student.id).count() == 0:
+        r = Reset_Requests(student_id = student.id, 
+                        teacher_id = teacher.id, 
+                        approved=False)
+        db.session.add(r)
+        db.session.commit()
+        return json_success()
+    return json_error(message="Password reset has already been requested")
     
 @app.route('/conspyre/teacher_list')
 @app.route("/conspyre/teacher_list/")

@@ -20,6 +20,6 @@ class AdminIndex(AdminIndexView):
 admin = Admin(app, name='Inspire', index_view = AdminIndex())
 admin.add_view(ModelView(User, db.session))
 #admin.add_view(ModelView(User.__history_mapper__.class_, db.session))
-#admin.add_view(ModelView(Reset_Requests.bind, db.session))
+admin.add_view(ModelView(Reset_Requests, db.session))
 #admin.add_view(ModelView(Prompt, db.session))
 #admin.add_view(ModelView(Response, db.session))
