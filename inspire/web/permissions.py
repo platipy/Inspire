@@ -47,9 +47,9 @@ def conspyre(blueprint=None):
             password = artifact['metadata']['password']
             user = User.query.filter(User.id == id).first()
             if user is None:
-                return json_error(message="Failed to perform %s. User not found" % f.__name__)
+                return json_error(error="UserNotFound")
             if not user.verify_password(password):
-                return json_error(message="Failed to perform %s. User/Password mismatch" % f.__name__)
+                return json_error(error="PasswordMismatch")
             g.user = user
             g.metadata = artifact['metadata']
             kwargs.update(artifact['data'])

@@ -12,7 +12,7 @@ def register():
     if form.is_submitted():
         if form.validate_on_submit():
             if User.query.filter(User.name == form.name.data).count() > 0:
-                flash("That name is already in use, please choose a different name.")
+                flash("That name is already in use, please choose a different name that students will recognize as you.")
                 render_template("register.html", form=form)
             if User.query.filter(User.email == form.email.data).count() > 0:
                 flash("That email is already in use. Are you already registered?")

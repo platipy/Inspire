@@ -7,6 +7,20 @@ import passlib.hash
 from inspire.lib.history_meta import Versioned
 
 
+class Teaching(db.Model):
+    __tablename__ = 'teaching'
+    student_id = db.Column(db.Integer, db.ForeignKey('user.id'), primary_key = True)
+    teacher_id = db.Column(db.Integer, db.ForeignKey('user.id'), primary_key = True)
+    class_name = db.Column(db.String)
+    time_start = db.Column(db.DateTime)
+    time_end   = db.Column(db.DateTime)
+    students = db.relationship("User", 
+                              backref='student_teaching',
+                              primaryjoin="User.id == Teaching.student_id")
+    teachers = db.relationship("User", 
+                              backref='teacher_teaching',
+                              primaryjoin="User.id == Teaching.teacher_id")
+
 class Reset_Requests(db.Model):
     __tablename__ = 'reset_requests'
     student_id = db.Column(db.Integer, db.ForeignKey('user.id'), primary_key = True)

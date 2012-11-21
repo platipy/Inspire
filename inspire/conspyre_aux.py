@@ -1,7 +1,7 @@
 from flask import jsonify, request
 
-def json_error(message, **kwargs):
-    return jsonify(type="error", message=message, data=kwargs)
+def json_error(error, **kwargs):
+    return jsonify(type="error", error=error, data=kwargs)
     
 def json_success(**kwargs):
     return jsonify(type="success", data=kwargs)
