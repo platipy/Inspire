@@ -4,8 +4,8 @@ from inspire import app, db
 from inspire.conspyre_aux import json_success, json_error, check_request_arguments
 from config import blueprint
 
-from database import User
-from inspire.modules.example.database import Dog, Dictionary
+from inspire.main_database import User
+from database import Dog, Dictionary
 import datetime
 
 @app.conspyre(blueprint)

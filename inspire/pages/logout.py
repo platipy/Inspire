@@ -1,5 +1,5 @@
 from inspire import app
-from inspire.database import User
+from inspire.main_database import User
 from flask import Flask, request, flash, redirect, url_for, render_template, g
 from flask import session
 

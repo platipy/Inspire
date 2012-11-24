@@ -1,5 +1,5 @@
 from flask import session, g, redirect, url_for, flash, request
-from inspire.database import User
+from inspire.main_database import User
 from inspire import app, db, config
 from decorator import decorator
 from functools import wraps

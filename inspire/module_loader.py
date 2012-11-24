@@ -3,7 +3,6 @@ import traceback
 from inspire import app, db
 from flask import Flask, request, flash, redirect, url_for, render_template, g
 from flask import session
-from inspire.database import *
 from inspire.pages.admin import admin
 from flask.ext.admin.contrib.sqlamodel import ModelView
 

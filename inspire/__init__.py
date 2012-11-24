@@ -30,13 +30,13 @@ def main():
         app.jinja_env.add_extension('jinja2.ext.do')
         db = SQLAlchemy(app)
         #versioned_session(db.session)
-        import database
+        import main_database
         import web
         import module_loader
         if options.reset_db:
             db.drop_all()
             db.create_all()
-            database.populate()
+            main_database.populate()
             for module in app.activity_modules:
                 try:
                     module.populate_tables()
@@ -56,6 +56,6 @@ def wsgi():
     app.config.from_object(config.FlaskConfig)
     app.jinja_env.add_extension('jinja2.ext.do')
     db = SQLAlchemy(app)
-    import database
+    import main_database
     import web
     import pages
