@@ -1,0 +1,26 @@
+{% extends "_base.html" %}
+{% from "_util.html" import render_field %}
+{% block title %}Template Points{% endblock %}
+
+{% block head %}
+<script type="text/javascript">
+$(function() {
+    /*
+        Javascript can go here! If you need to make an AJAX call, you'll want to
+        prepend your URL with the $SCRIPT_ROOT constant.
+    */
+});
+</script>
+{% endblock %}
+
+{% block content %}
+<div>    
+    <h2>Template Points</h2>
+    {% if error %}
+		{{ error }}
+	{% endif %}
+    {% for line in lines %}
+        {{ line }}
+    {% endfor %}
+</div>
+{% endblock %}

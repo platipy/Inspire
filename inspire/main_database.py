@@ -1,11 +1,9 @@
-# This file really needs a better name. We'll discuss later
 from inspire import db
 import sqlalchemy
 from flask.ext.sqlalchemy import SQLAlchemy
 from sqlalchemy.sql.expression import asc
 import passlib.hash
 from inspire.lib.history_meta import Versioned
-
 
 class Teaching(db.Model):
     __tablename__ = 'teaching'
@@ -84,23 +82,3 @@ def populate():
     
     db.session.commit()
         
-# class Prompt(Versioned, db.Model):
-    # id = db.Column(db.Integer, primary_key = True)
-    # prompt = db.Column(db.Text, nullable = False)
-    # author_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    # author = db.relationship('User', backref=db.backref('user', lazy='joined'))
-    
-    # def __repr__(self):
-        # return '<Prompt %d>' % self.id
-    
-    
-# class Response(Versioned, db.Model):
-    # id = db.Column(db.Integer, primary_key = True)
-    # text = db.Column(db.Text)
-    # prompt_id = db.Column(db.Integer, db.ForeignKey('prompt.id'))
-    # author_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    # prompt = db.relationship('Prompt')
-    # author = db.relationship('User')
-    
-    # def __repr__(self):
-        # return '<Response %d>' % self.id

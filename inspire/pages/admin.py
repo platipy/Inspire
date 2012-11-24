@@ -1,5 +1,5 @@
 from inspire import app, db
-from inspire.database import *
+from inspire.main_database import *
 from flask.ext.admin import Admin, BaseView, expose, AdminIndexView
 from flask import request, g
 from flask.ext.admin.contrib.sqlamodel import ModelView

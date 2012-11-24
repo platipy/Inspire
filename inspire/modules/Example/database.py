@@ -1,5 +1,5 @@
 from inspire import app, db
-from inspire.database import User
+from inspire.main_database import User
 from inspire.lib.history_meta import Versioned
 
 from config import internal_name, safe_name
@@ -12,7 +12,7 @@ class Dictionary(db.Model):
     __tablename__ = safe_name('dictionary')
     id = db.Column(db.Integer, primary_key = True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    user = db.relationship('User', backref=db.backref(safe_name('dictionary_user_ref')))
+    user = db.relationship(User, backref=db.backref(safe_name('dictionary_user_ref')))
     time_created = db.Column(db.DateTime)
     time_modified = db.Column(db.DateTime)
     teacher_id = db.Column(db.Integer)
@@ -39,7 +39,7 @@ class Points(Versioned, db.Model):
     
     def __repr__(self):
         return '<%s points: %d>' % (self.name, self.value)
-    
+
 # List Table Names
 tables = [Dictionary, Dog, Points]
     

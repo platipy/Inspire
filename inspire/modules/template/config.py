@@ -1,9 +1,9 @@
 from flask import Blueprint
 
 # Change These
-visible = False
-internal_name = "!@#$%^template!@#$%^"
-public_name = "!@#$%^PUBLIC_TEMPLATE!@#$%^"
+visible = True
+internal_name = "__INTERNAL__"
+public_name = "__PUBLIC__"
 
 # Keep this
 def safe_name(name):
