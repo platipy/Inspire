@@ -1,0 +1,11 @@
+Thumbs.db
+Desktop.ini
+*.py[co]
+*.egg
+*.egg-info
+dist
+build
+eggs
+develop-eggs
+pip-log.txt
+.DS_Store
