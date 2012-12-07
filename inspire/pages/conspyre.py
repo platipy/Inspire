@@ -1,4 +1,5 @@
 import os, sys
+import shutil
 import time
 from inspire import app, db
 from inspire.main_database import User, Reset_Requests
@@ -7,24 +8,30 @@ from flask import session, jsonify
 import json
 
 from inspire.conspyre_aux import json_success, json_error
+
+def replace_in_file(path, needle, replacement):
+    text_file = open(path, "r")
+    whole_thing = text_file.read()
+    whole_thing = whole_thing.replace(needle, replacement);
+    text_file.close()
+    text_file = open(path, "w")
+    text_file.write(whole_thing);
+    text_file.close();
     
 @app.route('/test/<module>')
 def test(module):
     if module in [a_module.internal_name for a_module in app.activity_modules]:
         return json_success()
     else:
-        module_dir= 'inspire/modules'
-        new_module= os.path.join(module_dir, module)
+        module_dir= 'inspire/skeleton_module'
+        new_module= os.path.join('inspire/modules', module)
         if os.path.exists(module_dir) and not os.path.exists(new_module):
-            os.makedirs(new_module)
-            # Log File
-            f = open(os.path.join(new_module, 'log.txt'), 'w')
-            f.write("Module automatically created at %s.\n" % (time.ctime(float(time.time())),))
-            f.close()
-            # Init File
-            f = open(os.path.join(new_module, '__init__.py'), 'w')
-            f.write("")
-            f.close()
+            shutil.copytree(module_dir, new_module)
+            replace_in_file(new_module+'/config.py', '!!@@!!', module)
+            replace_in_file(new_module+'/conspyre.py', '!!@@!!', module)
+            replace_in_file(new_module+'/database.py', '!!@@!!', module)
+            replace_in_file(new_module+'/pages.py', '!!@@!!', module)
+            replace_in_file(new_module+'/templates/template/index.html', '!!@@!!', module)
             return json_success()
         return json_error(error="ModuleNotFound")
 
