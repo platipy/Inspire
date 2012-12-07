@@ -1053,8 +1053,6 @@ def has_inherited_table(cls):
 
 def _as_declarative(cls, classname, dict_):
 
-    classname = cls.__module__ + '.' + classname
-
     # dict_ will be a dictproxy, which we can't write to, and we need to!
     dict_ = dict(dict_)
 

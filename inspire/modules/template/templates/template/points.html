@@ -16,11 +16,26 @@ $(function() {
 {% block content %}
 <div>    
     <h2>Template Points</h2>
+    <div class="container">
+    <div class="row">
+    <div class="span9">
+    <div class="navbar">
+    <div class="navbar-inner">
+    <a class="brand" href="#">Navigation</a>
+    <ul class="nav">
+    <li><a href="{{ url_for('.index') }}">Example Game</a></li>
+    <li class="active"><a href="{{ url_for('.view_points') }}">View Points</a></li>
+    </ul>
+    </div>
+    </div>
+    </div>
+    </div>
+    </div>
     {% if error %}
 		{{ error }}
 	{% endif %}
     {% for line in lines %}
-        {{ line }}
+        {{ line }}<br>
     {% endfor %}
 </div>
 {% endblock %}

@@ -1,6 +1,6 @@
 {% extends "_base.html" %}
 {% from "_util.html" import render_field %}
-{% block title %}Home{% endblock %}
+{% block title %}Template Home{% endblock %}
 
 {% block content %}
 <div>
@@ -11,9 +11,8 @@
     <div class="navbar-inner">
     <a class="brand" href="#">Navigation</a>
     <ul class="nav">
-    <li class="active"><a href="#">Example Game</a></li>
-    <li><a href="#">View Points</a></li>
-    <li><a href="#">Edit Points</a></li>
+    <li class="active"><a href="{{ url_for('.index') }}">Example Game</a></li>
+    <li><a href="{{ url_for('.view_points') }}">View Points</a></li>
     </ul>
     </div>
     </div>
@@ -24,6 +23,8 @@
     <h2>Welcome</h2>
     <div>
         Welcome to the Example game!
+        
+        Go check out your <a href='{{ url_for(".view_points") }}'>points</a>!
     </div>
 
 </div>

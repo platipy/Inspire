@@ -13,7 +13,7 @@ from config import internal_name, safe_name
 
 # The Dictionary Table is a built-in table that you can safely remove if you
 # don't need it.
-class Dictionary(db.Model):
+class TemplateDictionary(db.Model):
     __tablename__ = safe_name('dictionary')
     id = db.Column(db.Integer, primary_key = True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
@@ -26,7 +26,7 @@ class Dictionary(db.Model):
     value = db.Column(db.String)
     
 # List Table Names
-tables = [Dictionary]
+tables = [TemplateDictionary]
     
 # Generate sample data for the table
 def populate_tables():
@@ -37,7 +37,7 @@ def populate_tables():
     db.session.add(u)
     db.session.flush()
     
-    p = Dictionary(user = u, key='points', value = 0)
+    p = TemplateDictionary(user = u, key='points', value = 0)
     db.session.add(p)
     
     db.session.commit()

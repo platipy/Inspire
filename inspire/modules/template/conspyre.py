@@ -5,7 +5,7 @@ from inspire.conspyre_aux import json_success, json_error, check_request_argumen
 from config import blueprint
 
 from inspire.main_database import User
-from database import Dictionary
+from database import TemplateDictionary
 import datetime
 
 # Conspyre functions should look like:
@@ -19,25 +19,29 @@ import datetime
 
 @app.conspyre(blueprint)
 def get(key):
-    dictionary_query = Dictionary.query.filter(Dictionary.key == key, 
-                                               Dictionary.user == g.user)
+    dictionary_query = TemplateDictionary.query.filter(TemplateDictionary.key == key, 
+                                               TemplateDictionary.user == g.user)
     if dictionary_query.count() > 0:
-        value= Dictionary.query.filter(Dictionary.key == key, 
-                                       Dictionary.user == g.user).first()
-        return json_success(value=value.value)
+        value= dictionary_query.first()
+        return json_success(value.value)
     else:
         return json_error(error="ValueNotFound")
-
+        
+@app.conspyre(blueprint)
+def items():
+    items = TemplateDictionary.query.filter(TemplateDictionary.user == g.user).all()
+    return json_success(dict([(item.key, item.value) for item in items]))
+    
 @app.conspyre(blueprint)
 def put(key, value):
-    dictionary_query = Dictionary.query.filter(Dictionary.key == key, 
-                                               Dictionary.user == g.user)
+    dictionary_query = TemplateDictionary.query.filter(TemplateDictionary.key == key, 
+                                               TemplateDictionary.user == g.user)
     if dictionary_query.count() > 0:
         d = dictionary_query.first()
         d.value = value
         d.time_modified = datetime.datetime.now()
     else:
-        db.session.add(Dictionary(user = g.user, 
+        db.session.add(TemplateDictionary(user = g.user, 
                                   teacher_id= g.metadata['teacher'],
                                   time_created = datetime.datetime.now(),
                                   time_modified = datetime.datetime.now(),
@@ -47,16 +51,16 @@ def put(key, value):
     return json_success()
     
 @app.conspyre(blueprint)
-def update(pairs):
-    for key, value in pairs.items():
-        dictionary_query = Dictionary.query.filter(Dictionary.key == key, 
-                                                   Dictionary.user == g.user)
+def update(dict):
+    for key, value in dict.items():
+        dictionary_query = TemplateDictionary.query.filter(TemplateDictionary.key == key, 
+                                                   TemplateDictionary.user == g.user)
         if dictionary_query.count() > 0:
             d = dictionary_query.first()
             d.value = value
             d.time_modified = datetime.datetime.now()
         else:
-            db.session.add(Dictionary(user = g.user, 
+            db.session.add(TemplateDictionary(user = g.user, 
                                       teacher_id= g.metadata['teacher'],
                                       time_created = datetime.datetime.now(),
                                       time_modified = datetime.datetime.now(),
@@ -68,7 +72,7 @@ def update(pairs):
     
 @app.conspyre(blueprint)
 def has(key):
-    dictionary_query = Dictionary.query.filter(Dictionary.key == key, 
-                                               Dictionary.user == g.user)
-    return json_success(has= (dictionary_query.count() > 0))
+    dictionary_query = TemplateDictionary.query.filter(TemplateDictionary.key == key, 
+                                               TemplateDictionary.user == g.user)
+    return json_success((dictionary_query.count() > 0))
     

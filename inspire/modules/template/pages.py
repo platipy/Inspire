@@ -1,10 +1,10 @@
 from inspire import app, db
-from config import visible, public_name, internal_name, blueprint
+from config import visible, public_name, internal_name, blueprint, safe_name
 from flask import Flask, request, flash, redirect
 from flask import url_for, render_template, g, session
 
 from inspire.main_database import User
-from database import Dictionary
+from database import TemplateDictionary
 
 
 # Inspire pages should look like form
@@ -23,16 +23,16 @@ from database import Dictionary
 @blueprint.route('/')
 @app.inspire
 def index():
-    return render_template('index.html')
+    return render_template(internal_name+'/index.html')
 
 @blueprint.route('/points')
 @blueprint.route('/points/')
 @app.inspire
 def view_points():
-    dictionary_query = Dictionary.query.filter_by(key == 'points').all()
-    lines = ""
+    dictionary_query = TemplateDictionary.query.filter(TemplateDictionary.key == 'points').all()
+    lines = []
     for dictionary in dictionary_query:
-        name = "<b>%s</b>: " % dictionary.user.name
-        points = "%d<br>" % dictionary.value
-        lines += "%(name)s: %(points)s<br>" % {"name": name, "points": points}
-    return render_template('points.html', points = lines)
+        name = "%s" % dictionary.user.name
+        points = dictionary.value
+        lines.append("%(name)s: %(points)s" % {"name": name, "points": points})
+    return render_template(internal_name+'/points.html', lines = lines)

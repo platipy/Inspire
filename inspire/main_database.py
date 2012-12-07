@@ -10,12 +10,11 @@ class Teaching(db.Model):
     student_id = db.Column(db.Integer, db.ForeignKey('user.id'), primary_key = True)
     teacher_id = db.Column(db.Integer, db.ForeignKey('user.id'), primary_key = True)
     class_name = db.Column(db.String)
-    time_start = db.Column(db.DateTime)
-    time_end   = db.Column(db.DateTime)
-    students = db.relationship("User", 
+    time = db.Column(db.DateTime)
+    student = db.relationship("User", 
                               backref='student_teaching',
                               primaryjoin="User.id == Teaching.student_id")
-    teachers = db.relationship("User", 
+    teacher = db.relationship("User", 
                               backref='teacher_teaching',
                               primaryjoin="User.id == Teaching.teacher_id")
 
@@ -70,6 +69,8 @@ def populate():
     u3 = User(email='cookies', password='pass', name='Mr. Monster', user_type=User.TEACHER)
     db.session.add(u3)
     u4 = User(email='trex', password='pass', name='Rebecca Trexler', user_type=User.DEVELOPER)
+    db.session.add(u4)
+    u4 = User(email='dog_lover', password='pass', name='Some Dog Lover', user_type=User.STUDENT)
     db.session.add(u4)
     
     db.session.flush()

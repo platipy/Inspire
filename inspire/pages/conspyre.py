@@ -75,6 +75,12 @@ def _student_register():
              user_type=User.STUDENT)
     db.session.add(user)
     db.session.commit()
+    if 'teacher' in request.args:
+        teaching = Teaching(student= user,
+                            teacher_id= request.args['teacher'],
+                            time= time.time())
+        db.session.add(teaching)
+        db.session.commit()
     return json_success(id = user.id)
     
 @app.route("/conspyre/reset_password")

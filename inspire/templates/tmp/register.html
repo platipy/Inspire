@@ -1,0 +1,61 @@
+{% set active_page = 'register' %}
+{% from "_util.html" import render_field %}
+{% extends "_base.html" %}
+{% block head %}
+	{% set ajax_fields = "['username', 'sponsor', 'password', 'grad_date', 'acct_type', 'first_name', 'last_name', 'email', 'dob']"|safe %}
+	{% include "_form_verify_ajax.html" %}
+	{% include "_form_password_check.html" %}
+	{% include "_form_render_js.html" %}
+{% endblock %}
+{% block title %}Register Account{% endblock %}
+{% block body %}
+	{% if error %}
+		{{ error }}
+	{% endif %}
+	<form method="POST" action="{{ url_for('register2') }}">
+		{{ ajax_fields }}
+		{{ form.hidden_tag() }}
+		<fieldset>
+			<legend>Account Details</legend>
+			<table>
+				{{ render_field(form.username) }}
+				{{ render_field(form.password) }}
+				{{ render_field(form.pw_confirm) }}
+				{{ render_field(form.sponsor) }}
+				{{ render_field(form.acct_type) }}
+				{{ render_field(form.grad_date) }}
+				{{ render_field(form.description) }}
+			</table>
+		</fieldset>
+		<fieldset>
+			<legend>Personal Information</legend>
+			<table>
+				{{ render_field(form.first_name) }}
+				{{ render_field(form.last_name) }}
+				{{ render_field(form.dob) }}
+				{% if 'cas_id' in session and session['cas_id'] is not none %}
+					{{ render_field(form.email, disabled='disabled') }}
+				{% else %}
+					{{ render_field(form.email) }}
+				{% endif %}
+				<tr><td class="label">
+            	</td>
+            	<td class="input">
+        	    {{ form.captcha|safe }}
+            	</td>
+            	<td class="errors">
+            	<span id="validate_{{ form.captcha.id }}">
+            		{% if form.captcha.errors %}
+            	    <ul class="errors">
+            	        {% for error in form.captcha.errors %}
+            	            <li>{{ error }}
+            	        {% endfor %}
+            	    </ul>
+            	  {% endif %}
+            	</span>
+            	</td>
+			</table>
+		</fieldset>
+		<input type="submit" value="Go">
+	</form>
+{% endblock %}
